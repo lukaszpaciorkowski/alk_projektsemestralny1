@@ -1,0 +1,21 @@
+communication:
+  port: 8080
+  protocol: tcp
+data_configs:
+- change_step: 0.5
+  custom_params: {}
+  data_type: !!python/object/apply:shared.models.device_config.DataType
+  - float
+  drift_rate: 0.001
+  frequency: 1.0
+  initial_value: 20.0
+  max_value: 85.0
+  min_value: -40.0
+  name: temperature
+  noise_level: 0.02
+  unit: "\xB0C"
+device_id: example_sensor_001
+device_name: Example Sensor
+device_type: sensor
+metadata:
+  location: Example Location

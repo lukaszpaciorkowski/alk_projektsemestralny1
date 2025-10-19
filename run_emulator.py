@@ -1,15 +1,19 @@
+#!/usr/bin/env python3
 """
-Main entry point for the device emulator
+Script to run the device emulator with proper imports
 """
 
+import sys
 import asyncio
 import argparse
 import logging
 from pathlib import Path
 
-from .core.emulator import DeviceEmulator
-from ..shared.utils.config_loader import ConfigLoader
-from ..shared.models.device_config import DeviceConfig
+# Add src to Python path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from shared.utils.config_loader import ConfigLoader
+from device_emulator.core.emulator import DeviceEmulator
 
 
 async def main():
@@ -23,7 +27,8 @@ async def main():
     parser.add_argument("--port", type=int, help="Port to bind to (overrides config)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--list-configs", action="store_true", help="List available configuration files")
-    parser.add_argument("--create-example", choices=["sensor", "actuator"], help="Create example configuration")
+    # parser.add_argument("--create-example", choices=["sensor", "actuator"], help="Create example configuration")
+    parser.add_argument("--duration", type=int, default=10, help="Duration to run in seconds")
     
     args = parser.parse_args()
     
@@ -48,12 +53,12 @@ async def main():
             print("No configuration files found in config/device_configs/")
         return
     
-    if args.create_example:
-        config = ConfigLoader.create_example_config(args.create_example)
-        output_file = f"config/device_configs/example_{args.create_example}.yaml"
-        ConfigLoader.save_device_config(config, output_file)
-        print(f"Created example configuration: {output_file}")
-        return
+    # if args.create_example:
+    #     config = ConfigLoader.create_example_config(args.create_example)
+    #     output_file = f"config/device_configs/example_{args.create_example}.yaml"
+    #     ConfigLoader.save_device_config(config, output_file)
+    #     print(f"Created example configuration: {output_file}")
+    #     return
     
     # Load device configuration
     if args.config:
@@ -98,12 +103,32 @@ async def main():
         # Create emulator
         emulator = DeviceEmulator(device_config)
         
-        # Start emulator
-        await emulator.start(host=args.host, port=device_config.communication.get("port", 8080))
+        # Run for specified duration
+        print(f"\nGenerating data for {args.duration} seconds...")
+        print("=" * 60)
+        
+        for i in range(args.duration):
+            print(f"\nSample {i+1}:")
+            
+            # Generate data for each configured data type
+            for data_type_name in emulator.get_available_data_types():
+                data = await emulator.generate_single_data(data_type_name)
+                if data:
+                    timestamp = data.timestamp.strftime('%H:%M:%S.%f')[:-3]
+                    print(f"  {data.data_type}: {data.value} {data.unit} (at {timestamp})")
+            
+            # Show current values
+            current_values = emulator.get_current_values()
+            print(f"  Current values: {current_values}")
+            
+            # Wait for next sample
+            await asyncio.sleep(1.0)
+        
+        print("\n" + "=" * 60)
+        print("Emulator completed successfully!")
         
     except KeyboardInterrupt:
         logger.info("Stopping emulator...")
-        await emulator.stop()
     except Exception as e:
         logger.error(f"Error: {e}")
         raise
