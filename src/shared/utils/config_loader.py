@@ -72,45 +72,7 @@ class ConfigLoader:
             return MultiDeviceConfig(**config_data)
         except ValidationError as e:
             raise ValueError(f"Invalid multi-device configuration: {e}")
-    
-    @staticmethod
-    def save_multi_device_config(config: MultiDeviceConfig, file_path: Union[str, Path], format: str = 'yaml'):
-        """Save multi-device configuration to file"""
-        file_path = Path(file_path)
-        
-        # Ensure directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        config_dict = config.dict()
-        
-        if format.lower() == 'yaml':
-            with open(file_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config_dict, f, default_flow_style=False, indent=2)
-        elif format.lower() == 'json':
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(config_dict, f, indent=2, default=str)
-        else:
-            raise ValueError(f"Unsupported output format: {format}")
-    
-    # @staticmethod
-    # def save_device_config(config: DeviceConfig, file_path: Union[str, Path], format: str = 'yaml'):
-    #     """Save device configuration to file"""
-    #     file_path = Path(file_path)
-        
-    #     # Ensure directory exists
-    #     file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-    #     config_dict = config.dict()
-        
-    #     if format.lower() == 'yaml':
-    #         with open(file_path, 'w', encoding='utf-8') as f:
-    #             yaml.dump(config_dict, f, default_flow_style=False, indent=2)
-    #     elif format.lower() == 'json':
-    #         with open(file_path, 'w', encoding='utf-8') as f:
-    #             json.dump(config_dict, f, indent=2, default=str)
-    #     else:
-    #         raise ValueError(f"Unsupported output format: {format}")
-    
+
     @staticmethod
     def list_config_files(config_dir: Union[str, Path]) -> list[Path]:
         """List all configuration files in a directory"""
@@ -124,53 +86,4 @@ class ConfigLoader:
             config_files.extend(config_dir.glob(pattern))
         
         return sorted(config_files)
-    
-    # @staticmethod
-    # def create_example_config(device_type: str = "sensor") -> DeviceConfig:
-    #     """Create an example device configuration"""
-    #     if device_type == "sensor":
-    #         return DeviceConfig(
-    #             device_id="example_sensor_001",
-    #             device_name="Example Sensor",
-    #             device_type="sensor",
-    #             data_configs=[
-    #                 {
-    #                     "name": "temperature",
-    #                     "data_type": "float",
-    #                     "min_value": -40.0,
-    #                     "max_value": 85.0,
-    #                     "frequency": 1.0,
-    #                     "change_step": 0.5,
-    #                     "unit": "°C",
-    #                     "initial_value": 20.0,
-    #                     "noise_level": 0.02,
-    #                     "drift_rate": 0.001
-    #                 }
-    #             ],
-    #             communication={"protocol": "tcp", "port": 8080},
-    #             metadata={"location": "Example Location"}
-    #         )
-    #     elif device_type == "actuator":
-    #         return DeviceConfig(
-    #             device_id="example_actuator_001",
-    #             device_name="Example Actuator",
-    #             device_type="actuator",
-    #             data_configs=[
-    #                 {
-    #                     "name": "position",
-    #                     "data_type": "integer",
-    #                     "min_value": 0,
-    #                     "max_value": 100,
-    #                     "frequency": 2.0,
-    #                     "change_step": 5,
-    #                     "unit": "%",
-    #                     "initial_value": 0,
-    #                     "noise_level": 0.01,
-    #                     "drift_rate": 0.0
-    #                 }
-    #             ],
-    #             communication={"protocol": "tcp", "port": 8081},
-    #             metadata={"location": "Example Location"}
-    #         )
-    #     else:
-    #         raise ValueError(f"Unknown device type: {device_type}")
+        
