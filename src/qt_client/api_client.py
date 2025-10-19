@@ -130,7 +130,7 @@ class HistoricalDataChart(QChartView):
                 print("WARNING: Charts not available, cannot add series")
                 return
                 
-            series_key = f"{device_id}_{data_type}"
+            series_key = f"{device_id}#{data_type}"
             print(f"DEBUG: Series key: {series_key}")
             
             if series_key in self.series_dict:
@@ -156,7 +156,8 @@ class HistoricalDataChart(QChartView):
             valid_points = 0
             for point in data_points:
                 if isinstance(point.value, (int, float)):
-                    timestamp_ms = point.timestamp.toMSecsSinceEpoch()
+                    # Convert Python datetime to milliseconds since epoch
+                    timestamp_ms = int(point.timestamp.timestamp() * 1000)
                     series.append(timestamp_ms, point.value)
                     valid_points += 1
                 else:
@@ -178,7 +179,7 @@ class HistoricalDataChart(QChartView):
         if not CHARTS_AVAILABLE:
             return
             
-        series_key = f"{device_id}_{data_type}"
+        series_key = f"{device_id}#{data_type}"
         if series_key in self.series_dict:
             series = self.series_dict[series_key]
             self.chart.removeSeries(series)
@@ -215,7 +216,11 @@ class HistoricalDataChart(QChartView):
                     max_value = max(max_value, series.at(i).y())
         
         if min_time != float('inf') and max_time != float('-inf'):
-            self.time_axis.setRange(min_time, max_time)
+            # Convert milliseconds since epoch to QDateTime objects
+            from PyQt6.QtCore import QDateTime
+            min_qdatetime = QDateTime.fromMSecsSinceEpoch(int(min_time))
+            max_qdatetime = QDateTime.fromMSecsSinceEpoch(int(max_time))
+            self.time_axis.setRange(min_qdatetime, max_qdatetime)
         
         if min_value != float('inf') and max_value != float('-inf'):
             # Add some padding to the value range
@@ -691,8 +696,12 @@ class DeviceEmulatorClient(QMainWindow):
             
             # Update chart for selected series
             for series_key in self.selected_series:
-                device_id, data_type = series_key.split('_', 1)
-                self.update_chart_series(device_id, data_type)
+                parts = series_key.split('#', 1)
+                if len(parts) == 2:
+                    device_id, data_type = parts
+                    # Only update chart if data is available
+                    if self.data_manager and self.data_manager.get_data_stream(device_id, data_type):
+                        self.update_chart_series(device_id, data_type)
     
     def update_device_data_table(self):
         """Update the device data table in visualization tab"""
@@ -710,6 +719,16 @@ class DeviceEmulatorClient(QMainWindow):
             # Get all data streams
             all_streams = self.data_manager.get_all_data_streams()
             print(f"DEBUG: Found {len(all_streams)} devices with data streams")
+            
+            # Check if data has changed since last update
+            current_data_signature = self._get_data_signature(all_streams)
+            if hasattr(self, '_last_data_signature') and current_data_signature == self._last_data_signature:
+                print("DEBUG: No new data detected, skipping table update")
+                return
+            
+            # Store current data signature for next comparison
+            self._last_data_signature = current_data_signature
+            print("DEBUG: New data detected, updating table")
             
             # Count total rows needed
             total_rows = sum(len(device_streams) for device_streams in all_streams.values())
@@ -743,7 +762,7 @@ class DeviceEmulatorClient(QMainWindow):
                         
                         # Select checkbox
                         checkbox = QCheckBox()
-                        series_key = f"{device_id}_{data_type}"
+                        series_key = f"{device_id}#{data_type}"
                         checkbox.setChecked(series_key in self.selected_series)
                         checkbox.stateChanged.connect(lambda state, key=series_key: self.on_series_selection_changed(key, state))
                         self.device_data_table.setCellWidget(row, 5, checkbox)
@@ -759,6 +778,27 @@ class DeviceEmulatorClient(QMainWindow):
             import traceback
             traceback.print_exc()
     
+    def _get_data_signature(self, all_streams):
+        """Generate a signature for the current data state to detect changes"""
+        try:
+            signature_parts = []
+            
+            for device_id, device_streams in all_streams.items():
+                for data_type, stream in device_streams.items():
+                    latest_point = stream.get_latest_data_point()
+                    if latest_point:
+                        # Create a signature based on device_id, data_type, value, and timestamp
+                        signature_parts.append(f"{device_id}#{data_type}#{latest_point.value}#{latest_point.timestamp.isoformat()}")
+            
+            # Sort to ensure consistent signature regardless of iteration order
+            signature_parts.sort()
+            return "|".join(signature_parts)
+            
+        except Exception as e:
+            print(f"ERROR generating data signature: {e}")
+            # Return a fallback signature that will always be different
+            return f"error_{id(all_streams)}"
+    
     def on_series_selection_changed(self, series_key, state):
         """Handle checkbox selection change for data series"""
         try:
@@ -769,11 +809,17 @@ class DeviceEmulatorClient(QMainWindow):
                 print(f"DEBUG: Added {series_key} to selected_series")
                 
                 # Add series to chart
-                parts = series_key.split('_', 1)
+                parts = series_key.split('#', 1)
                 if len(parts) == 2:
                     device_id, data_type = parts
                     print(f"DEBUG: Adding chart series - Device: {device_id}, Data Type: {data_type}")
-                    self.update_chart_series(device_id, data_type)
+                    
+                    # Check if data is available before trying to update chart
+                    if self.data_manager and self.data_manager.get_data_stream(device_id, data_type):
+                        self.update_chart_series(device_id, data_type)
+                    else:
+                        print(f"DEBUG: No data available for {device_id} - {data_type}, skipping chart update")
+                        self.statusBar().showMessage(f"No data available for {device_id} - {data_type}. Fetch data first.", 3000)
                 else:
                     print(f"ERROR: Invalid series_key format: {series_key}")
             else:
@@ -781,7 +827,7 @@ class DeviceEmulatorClient(QMainWindow):
                 print(f"DEBUG: Removed {series_key} from selected_series")
                 
                 # Remove series from chart
-                parts = series_key.split('_', 1)
+                parts = series_key.split('#', 1)
                 if len(parts) == 2:
                     device_id, data_type = parts
                     print(f"DEBUG: Removing chart series - Device: {device_id}, Data Type: {data_type}")
@@ -813,6 +859,12 @@ class DeviceEmulatorClient(QMainWindow):
                 print("ERROR: historical_chart is None")
                 return
             
+            # Debug: Show all available streams
+            all_streams = self.data_manager.get_all_data_streams()
+            print(f"DEBUG: Available streams: {list(all_streams.keys())}")
+            for dev_id, dev_streams in all_streams.items():
+                print(f"DEBUG: Device {dev_id} has streams: {list(dev_streams.keys())}")
+            
             stream = self.data_manager.get_data_stream(device_id, data_type)
             if stream:
                 print(f"DEBUG: Stream found with {len(stream.data_points)} data points")
@@ -831,7 +883,19 @@ class DeviceEmulatorClient(QMainWindow):
                 else:
                     print("WARNING: No data points in stream")
             else:
-                print(f"ERROR: Stream not found for {device_id} - {data_type}")
+                print(f"WARNING: Stream not found for {device_id} - {data_type}")
+                print(f"DEBUG: This might be because:")
+                print(f"DEBUG: 1. No data has been fetched yet for this device/data_type")
+                print(f"DEBUG: 2. The device/data_type combination doesn't exist in the emulator")
+                print(f"DEBUG: 3. There's a timing issue between table display and data availability")
+                print(f"DEBUG: Available devices: {list(all_streams.keys())}")
+                if device_id in all_streams:
+                    print(f"DEBUG: Device {device_id} exists, available data types: {list(all_streams[device_id].keys())}")
+                else:
+                    print(f"DEBUG: Device {device_id} does not exist in available streams")
+                
+                # Show user-friendly message in status bar
+                self.statusBar().showMessage(f"No data available for {device_id} - {data_type}. Try fetching data first.", 3000)
                 
         except Exception as e:
             print(f"ERROR in update_chart_series: {e}")
@@ -857,6 +921,28 @@ class DeviceEmulatorClient(QMainWindow):
     def refresh_device_data(self):
         """Refresh the device data table"""
         self.update_device_data_table()
+    
+    def debug_data_state(self):
+        """Debug method to show current data state"""
+        if not self.data_manager:
+            print("DEBUG: No data_manager available")
+            return
+        
+        print("=== DATA STATE DEBUG ===")
+        all_streams = self.data_manager.get_all_data_streams()
+        print(f"Total devices: {len(all_streams)}")
+        
+        for device_id, device_streams in all_streams.items():
+            print(f"Device: {device_id}")
+            for data_type, stream in device_streams.items():
+                latest_point = stream.get_latest_data_point()
+                if latest_point:
+                    print(f"  - {data_type}: {latest_point.value} ({latest_point.unit}) at {latest_point.timestamp}")
+                else:
+                    print(f"  - {data_type}: No data points")
+        
+        print(f"Selected series: {list(self.selected_series)}")
+        print("=== END DEBUG ===")
     
     def toggle_auto_fetch(self):
         """Toggle automatic data fetching"""
@@ -918,6 +1004,16 @@ class DeviceEmulatorClient(QMainWindow):
         if not latest_data:
             return
         
+        # Check if data has changed since last update
+        current_data_signature = self._get_latest_data_signature(latest_data)
+        if hasattr(self, '_last_latest_data_signature') and current_data_signature == self._last_latest_data_signature:
+            print("DEBUG: No new latest data detected, skipping data table update")
+            return
+        
+        # Store current data signature for next comparison
+        self._last_latest_data_signature = current_data_signature
+        print("DEBUG: New latest data detected, updating data table")
+        
         # Count total data points
         total_points = sum(len(device_data) for device_data in latest_data.values() if isinstance(device_data, dict))
         
@@ -933,6 +1029,29 @@ class DeviceEmulatorClient(QMainWindow):
                         self.data_table.setItem(row, 2, QTableWidgetItem(str(data_point.get("value", ""))))
                         self.data_table.setItem(row, 3, QTableWidgetItem(data_point.get("unit", "")))
                         row += 1
+    
+    def _get_latest_data_signature(self, latest_data):
+        """Generate a signature for the latest data to detect changes"""
+        try:
+            signature_parts = []
+            
+            for device_id, device_data in latest_data.items():
+                if isinstance(device_data, dict):
+                    for data_type, data_point in device_data.items():
+                        if isinstance(data_point, dict):
+                            # Create signature based on device_id, data_type, value, and timestamp
+                            value = data_point.get("value", "")
+                            timestamp = data_point.get("timestamp", "")
+                            signature_parts.append(f"{device_id}#{data_type}#{value}#{timestamp}")
+            
+            # Sort to ensure consistent signature regardless of iteration order
+            signature_parts.sort()
+            return "|".join(signature_parts)
+            
+        except Exception as e:
+            print(f"ERROR generating latest data signature: {e}")
+            # Return a fallback signature that will always be different
+            return f"error_{id(latest_data)}"
         
     def update_devices_table(self, devices_data):
         """Update devices table with device information"""
