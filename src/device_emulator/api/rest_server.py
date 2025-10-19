@@ -23,14 +23,8 @@ class RestApiServer:
         self.app = web.Application()
         self.logger = logging.getLogger(f"{__name__}.{host}:{port}")
         
-        # Store current device data
-        self.current_data: Dict[str, Dict[str, DeviceData]] = {}
-        
         # Setup routes
         self._setup_routes()
-        
-        # Start background task to update data
-        self.update_task = None
     
     def _setup_routes(self):
         """Setup REST API routes"""
@@ -107,19 +101,8 @@ class RestApiServer:
     async def _get_all_data(self, request: web_request.Request) -> Response:
         """Get current data from all devices"""
         try:
-            # Generate fresh data
-            if hasattr(self.emulator, 'generate_data_for_all_devices'):
-                all_data = await self.emulator.generate_data_for_all_devices()
-            else:
-                # Fallback for basic emulator
-                all_data = {}
-                for device_id in self.emulator.device_emulators.keys():
-                    device_data = {}
-                    for data_type_name in self.emulator.device_emulators[device_id].get_available_data_types():
-                        data = await self.emulator.device_emulators[device_id].generate_single_data(data_type_name)
-                        if data:
-                            device_data[data_type_name] = data
-                    all_data[device_id] = device_data
+            # Get latest data from the simplified emulator
+            all_data = self.emulator.get_latest_data()
             
             # Convert to JSON-serializable format
             json_data = {}
@@ -146,24 +129,16 @@ class RestApiServer:
         try:
             device_id = request.match_info['device_id']
             
-            # Generate fresh data for the device
-            if hasattr(self.emulator, 'generate_data_for_device'):
-                device_data = await self.emulator.generate_data_for_device(device_id)
-            else:
-                # Fallback for basic emulator
-                if device_id not in self.emulator.device_emulators:
-                    return web.json_response({"error": f"Device {device_id} not found"}, status=404)
-                
-                device_data = []
-                for data_type_name in self.emulator.device_emulators[device_id].get_available_data_types():
-                    data = await self.emulator.device_emulators[device_id].generate_single_data(data_type_name)
-                    if data:
-                        device_data.append(data)
+            # Get latest data for the device
+            device_data = self.emulator.get_latest_data(device_id)
+            
+            if not device_data:
+                return web.json_response({"error": f"Device {device_id} not found"}, status=404)
             
             # Convert to JSON-serializable format
             json_data = {}
-            for data in device_data:
-                json_data[data.data_type] = {
+            for data_type, data in device_data.items():
+                json_data[data_type] = {
                     "value": data.value,
                     "unit": data.unit,
                     "timestamp": data.timestamp.isoformat(),
@@ -185,21 +160,8 @@ class RestApiServer:
             device_id = request.match_info['device_id']
             data_type = request.match_info['data_type']
             
-            # Generate fresh data for the specific data type
-            if hasattr(self.emulator, 'generate_data_for_device'):
-                device_data = await self.emulator.generate_data_for_device(device_id)
-                # Find the specific data type
-                specific_data = None
-                for data in device_data:
-                    if data.data_type == data_type:
-                        specific_data = data
-                        break
-            else:
-                # Fallback for basic emulator
-                if device_id not in self.emulator.device_emulators:
-                    return web.json_response({"error": f"Device {device_id} not found"}, status=404)
-                
-                specific_data = await self.emulator.device_emulators[device_id].generate_single_data(data_type)
+            # Get latest data for the specific data type
+            specific_data = self.emulator.get_latest_data(device_id, data_type)
             
             if not specific_data:
                 return web.json_response({"error": f"Data type {data_type} not found for device {device_id}"}, status=404)
@@ -319,5 +281,3 @@ class RestApiServer:
     async def stop(self):
         """Stop the REST API server"""
         self.logger.info("Stopping REST API server...")
-        if self.update_task:
-            self.update_task.cancel()
