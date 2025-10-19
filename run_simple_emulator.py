@@ -7,6 +7,9 @@ import sys
 import asyncio
 import argparse
 import logging
+import signal
+import threading
+import time
 from pathlib import Path
 
 # Add src to Python path
@@ -16,7 +19,99 @@ from shared.utils.config_loader import ConfigLoader
 from device_emulator.core.simple_emulator import SimpleEmulator
 
 
-async def main():
+class EmulatorRunner:
+    """Simple runner for the emulator without asyncio in main thread"""
+    
+    def __init__(self, config, host="localhost", api_port=8080, enable_api=True, duration=None):
+        self.config = config
+        self.host = host
+        self.api_port = api_port
+        self.enable_api = enable_api
+        self.duration = duration
+        self.emulator = None
+        self.running = False
+        self.stop_event = threading.Event()
+        
+    def start(self):
+        """Start the emulator in a separate thread"""
+        self.running = True
+        self.emulator = SimpleEmulator(self.config)
+        
+        # Set callback to notify when emulator stops
+        self.emulator.external_stop_callback = self._on_emulator_stop
+        
+        # Start emulator in a separate thread
+        self.emulator_thread = threading.Thread(target=self._run_emulator)
+        self.emulator_thread.daemon = True
+        self.emulator_thread.start()
+        
+        # Wait for emulator to start
+        time.sleep(1)
+    
+    def _on_emulator_stop(self):
+        """Callback when emulator stops"""
+        self.running = False
+        self.stop_event.set()
+        
+    def _run_emulator(self):
+        """Run the emulator in a separate thread"""
+        try:
+            # Create new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Start the emulator
+            if self.duration:
+                loop.run_until_complete(
+                    asyncio.wait_for(
+                        self.emulator.start(
+                            host=self.host,
+                            api_port=self.api_port,
+                            enable_api=self.enable_api
+                        ),
+                        timeout=self.duration
+                    )
+                )
+            else:
+                loop.run_until_complete(
+                    self.emulator.start(
+                        host=self.host,
+                        api_port=self.api_port,
+                        enable_api=self.enable_api
+                    )
+                )
+        except asyncio.TimeoutError:
+            print(f"Emulator ran for {self.duration} seconds and stopped")
+        except Exception as e:
+            print(f"Error in emulator: {e}")
+        finally:
+            self.running = False
+            self.stop_event.set()
+    
+    def stop(self):
+        """Stop the emulator"""
+        if self.emulator and self.running:
+            # Stop the emulator
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.emulator.stop())
+            self.running = False
+            self.stop_event.set()
+    
+    def wait_for_stop(self):
+        """Wait for the emulator to stop"""
+        self.stop_event.wait()
+
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals"""
+    print("\nReceived interrupt signal, stopping emulator...")
+    if 'runner' in globals():
+        runner.stop()
+    sys.exit(0)
+
+
+def main():
     """Main function for simplified emulator"""
     
     # Parse command line arguments
@@ -29,7 +124,7 @@ async def main():
                        help="Port for REST API server")
     parser.add_argument("--no-api", action="store_true", help="Disable REST API server")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--duration", type=int, default=20, help="Duration to run in seconds")
+    parser.add_argument("--duration", type=int, help="Duration to run in seconds")
     parser.add_argument("--device", type=str, help="Run only specific device ID")
     parser.add_argument("--list-devices", action="store_true", help="List all devices in config")
     parser.add_argument("--device-info", type=str, help="Show detailed info for specific device")
@@ -94,28 +189,28 @@ async def main():
             config.devices = [device]
             logger.info(f"Running only device: {device.device_name}")
         
-        # Create and start the simplified emulator
-        emulator = SimpleEmulator(config)
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Create and start the emulator runner
+        global runner
+        runner = EmulatorRunner(
+            config=config,
+            host=args.host,
+            api_port=args.api_port,
+            enable_api=not args.no_api,
+            duration=args.duration
+        )
         
         logger.info("Starting simplified emulator...")
-        logger.info("Press Ctrl+C to stop")
+        logger.info("Press Ctrl+C to stop or use GET /stop endpoint")
         
         # Start the emulator
-        try:
-            await asyncio.wait_for(
-                emulator.start(
-                    host=args.host,
-                    api_port=args.api_port,
-                    enable_api=not args.no_api
-                ),
-                timeout=args.duration
-            )
-        except asyncio.TimeoutError:
-            logger.info(f"Emulator ran for {args.duration} seconds and stopped")
-        except KeyboardInterrupt:
-            logger.info("Received interrupt signal")
-        finally:
-            await emulator.stop()
+        runner.start()
+        
+        # Wait for emulator to stop
+        runner.wait_for_stop()
         
         logger.info("Emulator stopped.")
         return 0
@@ -129,5 +224,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
+    exit_code = main()
     sys.exit(exit_code)

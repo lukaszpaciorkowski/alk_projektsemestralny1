@@ -8,7 +8,7 @@ import logging
 from typing import Union, Any, Dict, List
 from datetime import datetime, timedelta
 
-from shared.models.device_config import DataGenerationConfig, DataType
+from shared.models.config import DataGenerationConfig, DataType
 from shared.models.device_data import DeviceData, DataPoint
 
 

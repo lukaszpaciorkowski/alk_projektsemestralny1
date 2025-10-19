@@ -8,7 +8,7 @@ import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from shared.models.multi_device_config import MultiDeviceConfig, DeviceDefinition
+from shared.models.config import DeviceConfig, DeviceDefinition
 from shared.models.device_data import DeviceData
 from .simple_device import SimpleDevice
 from ..api.rest_server import RestApiServer
@@ -17,7 +17,7 @@ from ..api.rest_server import RestApiServer
 class SimpleEmulator:
     """Simplified single-threaded emulator that manages all devices in one loop"""
     
-    def __init__(self, config: MultiDeviceConfig):
+    def __init__(self, config: DeviceConfig):
         self.config = config
         self.devices: Dict[str, SimpleDevice] = {}
         self.running = False
@@ -28,6 +28,12 @@ class SimpleEmulator:
         
         # Data storage for API access
         self.latest_data: Dict[str, Dict[str, DeviceData]] = {}
+        
+        # Stop event for graceful shutdown
+        self.stop_event = asyncio.Event()
+        
+        # External stop callback for runner
+        self.external_stop_callback = None
         
         # Initialize devices
         self._initialize_devices()
@@ -80,11 +86,16 @@ class SimpleEmulator:
     async def stop(self):
         """Stop the emulator"""
         self.running = False
+        self.stop_event.set()
         self.logger.info("Stopping simple emulator...")
         
         # Stop REST API server
         if self.rest_server:
             await self.rest_server.stop()
+        
+        # Call external stop callback if set
+        if self.external_stop_callback:
+            self.external_stop_callback()
         
         self.logger.info("Simple emulator stopped")
     
@@ -103,7 +114,7 @@ class SimpleEmulator:
         self.logger.info(f"Using emulation loop frequency: {1.0/min_sleep_time:.1f} Hz")
         
         try:
-            while self.running:
+            while self.running and not self.stop_event.is_set():
                 loop_start = time.time()
                 
                 # Generate data for all devices and all their data types
@@ -142,7 +153,11 @@ class SimpleEmulator:
                 sleep_time = max(0, min_sleep_time - loop_duration)
                 
                 if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
+                    # Use wait_for to allow interruption by stop event
+                    try:
+                        await asyncio.wait_for(asyncio.sleep(sleep_time), timeout=sleep_time)
+                    except asyncio.TimeoutError:
+                        pass  # Normal timeout, continue loop
                     
         except asyncio.CancelledError:
             self.logger.info("Main emulation loop stopped")
@@ -211,7 +226,7 @@ class SimpleEmulator:
         return [device_id for device_id, device in self.devices.items() 
                 if device.device_type == device_type]
     
-    def get_configuration(self) -> MultiDeviceConfig:
+    def get_configuration(self) -> DeviceConfig:
         """Get the current multi-device configuration"""
         return self.config
     

@@ -46,6 +46,9 @@ class RestApiServer:
         
         # API documentation endpoint
         self.app.router.add_get('/api', self._api_documentation)
+        
+        # Control endpoints
+        self.app.router.add_get('/stop', self._stop_emulator)
     
     async def _health_check(self, request: web_request.Request) -> Response:
         """Health check endpoint"""
@@ -243,18 +246,45 @@ class RestApiServer:
                 "GET /data/{device_id}": "Get current data from a specific device",
                 "GET /data/{device_id}/{data_type}": "Get specific data type from a specific device",
                 "GET /ws": "WebSocket endpoint for real-time data",
-                "GET /api": "This API documentation"
+                "GET /api": "This API documentation",
+                "GET /stop": "Stop the emulator and server"
             },
             "examples": {
                 "get_all_devices": "GET /devices",
                 "get_device_info": "GET /devices/temp_sensor_001",
                 "get_all_data": "GET /data",
                 "get_device_data": "GET /data/temp_sensor_001",
-                "get_temperature": "GET /data/temp_sensor_001/temperature"
+                "get_temperature": "GET /data/temp_sensor_001/temperature",
+                "stop_emulator": "GET /stop"
             }
         }
         
         return web.json_response(documentation)
+    
+    async def _stop_emulator(self, request: web_request.Request) -> Response:
+        """Stop the emulator and server"""
+        try:
+            self.logger.info("Received stop request via API")
+            
+            # Stop the emulator
+            if hasattr(self.emulator, 'stop'):
+                await self.emulator.stop()
+            
+            # Schedule server shutdown
+            asyncio.create_task(self._shutdown_server())
+            
+            return web.json_response({
+                "message": "Emulator and server stopped successfully",
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception as e:
+            self.logger.error(f"Error stopping emulator: {e}")
+            return web.json_response({"error": str(e)}, status=500)
+    
+    async def _shutdown_server(self):
+        """Shutdown the server gracefully"""
+        self.logger.info("Shutting down REST API server...")
+        # The server will be stopped when the main loop exits
     
     async def start(self):
         """Start the REST API server"""

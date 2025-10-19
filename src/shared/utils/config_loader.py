@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, Union
 from pydantic import ValidationError
 
-from ..models.device_config import DeviceConfig
-from ..models.multi_device_config import MultiDeviceConfig
+from ..models.config import DeviceConfig
 
 
 class ConfigLoader:
@@ -56,7 +55,7 @@ class ConfigLoader:
             raise ValueError(f"Invalid configuration: {e}")
     
     @staticmethod
-    def load_multi_device_config(file_path: Union[str, Path]) -> MultiDeviceConfig:
+    def load_multi_device_config(file_path: Union[str, Path]) -> DeviceConfig:
         """Load and validate multi-device configuration"""
         file_path = Path(file_path)
         
@@ -69,7 +68,7 @@ class ConfigLoader:
             raise ValueError(f"Unsupported configuration file format: {file_path.suffix}")
         
         try:
-            return MultiDeviceConfig(**config_data)
+            return DeviceConfig(**config_data)
         except ValidationError as e:
             raise ValueError(f"Invalid multi-device configuration: {e}")
 
