@@ -27,6 +27,9 @@ async def main():
     parser.add_argument("--host", default="localhost", help="Host to bind to")
     parser.add_argument("--base-port", type=int, default=8080, 
                        help="Base port number (devices will use base_port + index)")
+    parser.add_argument("--api-port", type=int, default=8080, 
+                       help="Port for REST API server")
+    parser.add_argument("--no-api", action="store_true", help="Disable REST API server")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--duration", type=int, default=10, help="Duration to run in seconds")
     parser.add_argument("--device", type=str, help="Run only specific device ID")
@@ -115,6 +118,7 @@ async def main():
     print(f"Duration: {args.duration} seconds")
     print(f"Host: {args.host}")
     print(f"Base Port: {args.base_port}")
+    print(f"REST API: {'Disabled' if args.no_api else f'Enabled on port {args.api_port}'}")
     
     # Show devices
     print(f"\nDevices:")
@@ -132,6 +136,17 @@ async def main():
     print("=" * 60)
     
     try:
+        # Start emulator with REST API
+        emulator_task = asyncio.create_task(emulator.start(
+            host=args.host, 
+            base_port=args.base_port,
+            enable_api=not args.no_api,
+            api_port=args.api_port
+        ))
+        
+        # Give the emulator time to start
+        await asyncio.sleep(2)
+        
         # Run for specified duration
         for i in range(args.duration):
             print(f"\n--- Sample {i+1} ---")

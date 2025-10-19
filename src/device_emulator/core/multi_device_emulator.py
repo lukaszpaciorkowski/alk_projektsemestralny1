@@ -12,6 +12,7 @@ from shared.models.multi_device_config import MultiDeviceConfig, DeviceDefinitio
 from shared.models.device_data import DeviceData, DataPoint
 from .emulator import DeviceEmulator
 from .data_generator import DataGeneratorFactory, BaseDataGenerator
+from ..api.rest_server import RestApiServer
 
 
 class MultiDeviceEmulator:
@@ -23,6 +24,9 @@ class MultiDeviceEmulator:
         self.running = False
         self.tasks: List[asyncio.Task] = []
         self.logger = logging.getLogger(f"{__name__}.{config.config_name}")
+        
+        # REST API server
+        self.rest_server: Optional[RestApiServer] = None
         
         # Initialize device emulators
         self._initialize_device_emulators()
@@ -48,16 +52,23 @@ class MultiDeviceEmulator:
             
             self.logger.info(f"Initialized emulator for {device_def.device_name} ({device_def.device_id})")
     
-    async def start(self, host: str = "localhost", base_port: int = 8080):
-        """Start all device emulators"""
+    async def start(self, host: str = "localhost", base_port: int = 8080, enable_api: bool = True, api_port: int = 8080):
+        """Start all device emulators and REST API server"""
         self.running = True
         self.logger.info(f"Starting multi-device emulator: {self.config.config_name}")
         self.logger.info(f"Managing {len(self.device_emulators)} devices")
         
+        # Start REST API server if enabled
+        if enable_api:
+            self.rest_server = RestApiServer(self, host=host, port=api_port)
+            api_task = asyncio.create_task(self.rest_server.start())
+            self.tasks.append(api_task)
+            self.logger.info(f"REST API server will start on {host}:{api_port}")
+        
         # Start each device emulator
         for i, (device_id, emulator) in enumerate(self.device_emulators.items()):
             device_def = self.config.get_device_by_id(device_id)
-            port = base_port + i
+            port = base_port + i + 1  # Start from base_port + 1 to avoid conflict with API
             
             # Override port if specified in device communication config
             if 'port' in device_def.communication:
@@ -78,9 +89,13 @@ class MultiDeviceEmulator:
             raise
     
     async def stop(self):
-        """Stop all device emulators"""
+        """Stop all device emulators and REST API server"""
         self.running = False
         self.logger.info("Stopping multi-device emulator...")
+        
+        # Stop REST API server
+        if self.rest_server:
+            await self.rest_server.stop()
         
         # Cancel all tasks
         for task in self.tasks:
