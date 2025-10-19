@@ -1,0 +1,404 @@
+# Unified Device Configuration
+# This configuration contains all sensors and actuators with their individual metadata
+
+config_name: "Industrial Plant Monitoring System"
+config_version: "1.0"
+description: "Complete configuration for industrial plant with temperature sensors, pressure sensors, and motor controllers"
+created_by: "System Administrator"
+created_date: "2025-10-19"
+tags: ["industrial", "monitoring", "automation"]
+
+# Global settings applied to all devices
+global_communication:
+  protocol: "tcp"
+  buffer_size: 1024
+  timeout: 30
+  retry_count: 3
+
+global_metadata:
+  facility: "Industrial Plant Alpha"
+  timezone: "UTC"
+  data_retention_days: 365
+
+# Device definitions
+devices:
+  # Temperature Sensors
+  - device_id: "temp_sensor_001"
+    device_name: "Temperature Sensor - Room A"
+    device_type: "sensor"
+    data_configs:
+      - name: "temperature"
+        data_type: "float"
+        min_value: -40.0
+        max_value: 85.0
+        frequency: 1.0  # 1 Hz
+        change_step: 0.5  # Max 0.5°C change per second
+        unit: "°C"
+        initial_value: 20.0
+        noise_level: 0.02  # 2% noise
+        drift_rate: 0.001  # 0.001°C per second drift
+        custom_params:
+          precision: 1
+      - name: "humidity"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 100.0
+        frequency: 0.5  # 0.5 Hz
+        change_step: 1.0  # Max 1% change per second
+        unit: "%"
+        initial_value: 50.0
+        noise_level: 0.01  # 1% noise
+        drift_rate: 0.0  # No drift
+        custom_params:
+          precision: 1
+    communication:
+      port: 8080
+    metadata:
+      location: "Room A - Main Production Floor"
+      manufacturer: "SensorCorp"
+      model: "TempSense-2000"
+      serial_number: "TS2000-001"
+      installation_date: "2024-01-15"
+      maintenance_schedule: "Quarterly"
+      environment: "Indoor, controlled temperature"
+      notes: "Primary temperature monitoring for Room A"
+      custom_fields:
+        zone: "Production-A"
+        critical: true
+        alarm_threshold_high: 80.0
+        alarm_threshold_low: -10.0
+
+  - device_id: "temp_sensor_002"
+    device_name: "Temperature Sensor - Room B"
+    device_type: "sensor"
+    data_configs:
+      - name: "temperature"
+        data_type: "float"
+        min_value: -40.0
+        max_value: 85.0
+        frequency: 1.0
+        change_step: 0.3  # Slower changes
+        unit: "°C"
+        initial_value: 22.0
+        noise_level: 0.015  # Less noise
+        drift_rate: 0.0005
+        custom_params:
+          precision: 1
+      - name: "humidity"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 100.0
+        frequency: 0.5
+        change_step: 0.8
+        unit: "%"
+        initial_value: 45.0
+        noise_level: 0.01
+        drift_rate: 0.0
+        custom_params:
+          precision: 1
+    communication:
+      port: 8081
+    metadata:
+      location: "Room B - Storage Area"
+      manufacturer: "SensorCorp"
+      model: "TempSense-2000"
+      serial_number: "TS2000-002"
+      installation_date: "2024-02-20"
+      maintenance_schedule: "Quarterly"
+      environment: "Indoor, storage conditions"
+      notes: "Secondary temperature monitoring for Room B"
+      custom_fields:
+        zone: "Storage-B"
+        critical: false
+        alarm_threshold_high: 75.0
+        alarm_threshold_low: -5.0
+
+  # Pressure Sensors
+  - device_id: "pressure_sensor_001"
+    device_name: "Pressure Sensor - Tank A"
+    device_type: "sensor"
+    data_configs:
+      - name: "pressure"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 10.0
+        frequency: 2.0  # 2 Hz
+        change_step: 0.1  # Max 0.1 bar change per second
+        unit: "bar"
+        initial_value: 1.0
+        noise_level: 0.005  # 0.5% noise
+        drift_rate: 0.0001  # Very slow drift
+        custom_params:
+          precision: 3
+      - name: "status"
+        data_type: "boolean"
+        min_value: 0.0
+        max_value: 1.0
+        frequency: 0.1  # 0.1 Hz (every 10 seconds)
+        change_step: 0.01  # 1% chance to change per second
+        unit: ""
+        initial_value: null
+        noise_level: 0.0
+        drift_rate: 0.0
+        custom_params: {}
+    communication:
+      port: 8082
+    metadata:
+      location: "Tank A - Chemical Storage"
+      manufacturer: "PressureTech"
+      model: "PressSense-5000"
+      serial_number: "PS5000-001"
+      installation_date: "2024-03-10"
+      maintenance_schedule: "Monthly"
+      environment: "Chemical storage, hazardous area"
+      notes: "Critical pressure monitoring for chemical tank"
+      custom_fields:
+        zone: "Chemical-A"
+        critical: true
+        max_pressure: 8.0
+        min_pressure: 0.5
+        safety_valve_pressure: 9.0
+
+  - device_id: "pressure_sensor_002"
+    device_name: "Pressure Sensor - Tank B"
+    device_type: "sensor"
+    data_configs:
+      - name: "pressure"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 15.0
+        frequency: 1.5
+        change_step: 0.15
+        unit: "bar"
+        initial_value: 2.0
+        noise_level: 0.008
+        drift_rate: 0.0002
+        custom_params:
+          precision: 3
+      - name: "status"
+        data_type: "boolean"
+        min_value: 0.0
+        max_value: 1.0
+        frequency: 0.1
+        change_step: 0.01
+        unit: ""
+        initial_value: null
+        noise_level: 0.0
+        drift_rate: 0.0
+        custom_params: {}
+    communication:
+      port: 8083
+    metadata:
+      location: "Tank B - Water Storage"
+      manufacturer: "PressureTech"
+      model: "PressSense-5000"
+      serial_number: "PS5000-002"
+      installation_date: "2024-03-15"
+      maintenance_schedule: "Monthly"
+      environment: "Water storage, clean area"
+      notes: "Water tank pressure monitoring"
+      custom_fields:
+        zone: "Water-B"
+        critical: false
+        max_pressure: 12.0
+        min_pressure: 1.0
+        safety_valve_pressure: 13.0
+
+  # Motor Controllers
+  - device_id: "motor_controller_001"
+    device_name: "Motor Controller - Conveyor Belt A"
+    device_type: "actuator"
+    data_configs:
+      - name: "rpm"
+        data_type: "integer"
+        min_value: 0
+        max_value: 3000
+        frequency: 10.0  # 10 Hz
+        change_step: 50  # Max 50 RPM change per second
+        unit: "RPM"
+        initial_value: 0
+        noise_level: 0.01  # 1% noise
+        drift_rate: 0.0
+        custom_params:
+          target_rpm: 1500
+      - name: "temperature"
+        data_type: "float"
+        min_value: 20.0
+        max_value: 80.0
+        frequency: 1.0  # 1 Hz
+        change_step: 2.0  # Max 2°C change per second
+        unit: "°C"
+        initial_value: 25.0
+        noise_level: 0.02  # 2% noise
+        drift_rate: 0.1  # Gradual heating
+        custom_params:
+          precision: 1
+      - name: "status"
+        data_type: "string"
+        min_value: 0.0
+        max_value: 1.0
+        frequency: 0.2  # 0.2 Hz (every 5 seconds)
+        change_step: 0.05  # 5% chance to change per second
+        unit: ""
+        initial_value: null
+        noise_level: 0.0
+        drift_rate: 0.0
+        custom_params:
+          possible_states: ["idle", "running", "error", "maintenance"]
+      - name: "power_consumption"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 1000.0
+        frequency: 5.0  # 5 Hz
+        change_step: 10.0  # Max 10W change per second
+        unit: "W"
+        initial_value: 0.0
+        noise_level: 0.03  # 3% noise
+        drift_rate: 0.0
+        custom_params:
+          precision: 1
+    communication:
+      port: 8084
+    metadata:
+      location: "Production Line 1 - Conveyor Belt A"
+      manufacturer: "MotorTech"
+      model: "MotorCtrl-3000"
+      serial_number: "MC3000-001"
+      installation_date: "2024-01-20"
+      maintenance_schedule: "Bi-weekly"
+      environment: "Production floor, high vibration"
+      notes: "Main conveyor belt motor controller"
+      custom_fields:
+        zone: "Production-1"
+        critical: true
+        max_rpm: 3000
+        rated_power: 500
+        maintenance_hours: 2000
+
+  - device_id: "motor_controller_002"
+    device_name: "Motor Controller - Pump Station A"
+    device_type: "actuator"
+    data_configs:
+      - name: "rpm"
+        data_type: "integer"
+        min_value: 0
+        max_value: 1800
+        frequency: 8.0
+        change_step: 30
+        unit: "RPM"
+        initial_value: 0
+        noise_level: 0.008
+        drift_rate: 0.0
+        custom_params:
+          target_rpm: 1200
+      - name: "temperature"
+        data_type: "float"
+        min_value: 15.0
+        max_value: 70.0
+        frequency: 1.0
+        change_step: 1.5
+        unit: "°C"
+        initial_value: 20.0
+        noise_level: 0.015
+        drift_rate: 0.05
+        custom_params:
+          precision: 1
+      - name: "status"
+        data_type: "string"
+        min_value: 0.0
+        max_value: 1.0
+        frequency: 0.3
+        change_step: 0.03
+        unit: ""
+        initial_value: null
+        noise_level: 0.0
+        drift_rate: 0.0
+        custom_params:
+          possible_states: ["idle", "running", "error", "maintenance", "standby"]
+      - name: "flow_rate"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 100.0
+        frequency: 2.0
+        change_step: 5.0
+        unit: "L/min"
+        initial_value: 0.0
+        noise_level: 0.02
+        drift_rate: 0.0
+        custom_params:
+          precision: 1
+    communication:
+      port: 8085
+    metadata:
+      location: "Pump Station A - Water System"
+      manufacturer: "PumpTech"
+      model: "PumpCtrl-2000"
+      serial_number: "PC2000-001"
+      installation_date: "2024-02-10"
+      maintenance_schedule: "Monthly"
+      environment: "Pump room, controlled environment"
+      notes: "Main water circulation pump controller"
+      custom_fields:
+        zone: "Pump-A"
+        critical: true
+        max_flow: 100.0
+        rated_power: 300
+        maintenance_hours: 5000
+
+  # Additional Sensors
+  - device_id: "vibration_sensor_001"
+    device_name: "Vibration Sensor - Motor 001"
+    device_type: "sensor"
+    data_configs:
+      - name: "vibration_x"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 10.0
+        frequency: 20.0  # 20 Hz
+        change_step: 0.5
+        unit: "mm/s"
+        initial_value: 0.1
+        noise_level: 0.05
+        drift_rate: 0.0
+        custom_params:
+          precision: 2
+      - name: "vibration_y"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 10.0
+        frequency: 20.0
+        change_step: 0.5
+        unit: "mm/s"
+        initial_value: 0.1
+        noise_level: 0.05
+        drift_rate: 0.0
+        custom_params:
+          precision: 2
+      - name: "vibration_z"
+        data_type: "float"
+        min_value: 0.0
+        max_value: 10.0
+        frequency: 20.0
+        change_step: 0.5
+        unit: "mm/s"
+        initial_value: 0.1
+        noise_level: 0.05
+        drift_rate: 0.0
+        custom_params:
+          precision: 2
+    communication:
+      port: 8086
+    metadata:
+      location: "Motor 001 - Vibration Monitoring"
+      manufacturer: "VibroSense"
+      model: "VibroSensor-1000"
+      serial_number: "VS1000-001"
+      installation_date: "2024-04-01"
+      maintenance_schedule: "Quarterly"
+      environment: "Motor mounting, high vibration"
+      notes: "Vibration monitoring for predictive maintenance"
+      custom_fields:
+        zone: "Motor-001"
+        critical: false
+        alarm_threshold: 5.0
+        warning_threshold: 3.0

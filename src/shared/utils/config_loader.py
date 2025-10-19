@@ -9,6 +9,7 @@ from typing import Dict, Any, Union
 from pydantic import ValidationError
 
 from ..models.device_config import DeviceConfig
+from ..models.multi_device_config import MultiDeviceConfig
 
 
 class ConfigLoader:
@@ -53,6 +54,43 @@ class ConfigLoader:
             return DeviceConfig(**config_data)
         except ValidationError as e:
             raise ValueError(f"Invalid configuration: {e}")
+    
+    @staticmethod
+    def load_multi_device_config(file_path: Union[str, Path]) -> MultiDeviceConfig:
+        """Load and validate multi-device configuration"""
+        file_path = Path(file_path)
+        
+        # Determine file type and load accordingly
+        if file_path.suffix.lower() == '.yaml' or file_path.suffix.lower() == '.yml':
+            config_data = ConfigLoader.load_yaml_config(file_path)
+        elif file_path.suffix.lower() == '.json':
+            config_data = ConfigLoader.load_json_config(file_path)
+        else:
+            raise ValueError(f"Unsupported configuration file format: {file_path.suffix}")
+        
+        try:
+            return MultiDeviceConfig(**config_data)
+        except ValidationError as e:
+            raise ValueError(f"Invalid multi-device configuration: {e}")
+    
+    @staticmethod
+    def save_multi_device_config(config: MultiDeviceConfig, file_path: Union[str, Path], format: str = 'yaml'):
+        """Save multi-device configuration to file"""
+        file_path = Path(file_path)
+        
+        # Ensure directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        config_dict = config.dict()
+        
+        if format.lower() == 'yaml':
+            with open(file_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+        elif format.lower() == 'json':
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(config_dict, f, indent=2, default=str)
+        else:
+            raise ValueError(f"Unsupported output format: {format}")
     
     # @staticmethod
     # def save_device_config(config: DeviceConfig, file_path: Union[str, Path], format: str = 'yaml'):
