@@ -31,14 +31,14 @@ class ApiClientThread(QThread):
     
     def __init__(self, base_url: str = "http://localhost:8080"):
         super().__init__()
-        logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(sys.stdout),  # Console output
-                logging.FileHandler('qt_client.log', mode='w')  # File output
-            ]
-        )
+        # logging.basicConfig(
+        # level=logging.DEBUG,
+        # format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        #     handlers=[
+        #         logging.StreamHandler(sys.stdout),  # Console output
+        #         logging.FileHandler('qt_client.log', mode='w')  # File output
+        #     ]
+        # )
         self.base_url = base_url.rstrip('/')
         self.session = None
         self.loop = None

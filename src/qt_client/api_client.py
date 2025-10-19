@@ -6,6 +6,7 @@ Simple Qt application for connecting to the device emulator REST API
 import sys
 import json
 import logging
+import argparse
 from typing import Dict, Any, Optional, List
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
@@ -85,6 +86,7 @@ class HistoricalDataChart(QChartView):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.logger = logging.getLogger(f"{__name__}.HistoricalDataChart")
         
         if CHARTS_AVAILABLE:
             self.chart = QChart()
@@ -124,33 +126,33 @@ class HistoricalDataChart(QChartView):
     def add_data_series(self, device_id: str, data_type: str, data_points: List[DataPoint], color: QColor = None):
         """Add or update a data series"""
         try:
-            print(f"DEBUG: add_data_series called - Device: {device_id}, Data Type: {data_type}, Points: {len(data_points)}")
+            self.logger.debug(f"add_data_series called - Device: {device_id}, Data Type: {data_type}, Points: {len(data_points)}")
             
             if not CHARTS_AVAILABLE:
-                print("WARNING: Charts not available, cannot add series")
+                self.logger.warning("Charts not available, cannot add series")
                 return
                 
             series_key = f"{device_id}#{data_type}"
-            print(f"DEBUG: Series key: {series_key}")
+            self.logger.debug(f"Series key: {series_key}")
             
             if series_key in self.series_dict:
                 # Update existing series
-                print("DEBUG: Updating existing series")
+                self.logger.debug("Updating existing series")
                 series = self.series_dict[series_key]
                 series.clear()
             else:
                 # Create new series
-                print("DEBUG: Creating new series")
+                self.logger.debug("Creating new series")
                 series = QLineSeries()
                 series.setName(f"{device_id} - {data_type}")
                 if color:
                     series.setColor(color)
-                    print(f"DEBUG: Set series color: {color}")
+                    self.logger.debug(f"Set series color: {color}")
                 self.chart.addSeries(series)
                 series.attachAxis(self.time_axis)
                 series.attachAxis(self.value_axis)
                 self.series_dict[series_key] = series
-                print("DEBUG: Series added to chart")
+                self.logger.debug("Series added to chart")
             
             # Add data points
             valid_points = 0
@@ -161,16 +163,16 @@ class HistoricalDataChart(QChartView):
                     series.append(timestamp_ms, point.value)
                     valid_points += 1
                 else:
-                    print(f"WARNING: Skipping non-numeric value: {point.value}")
+                    self.logger.warning(f"Skipping non-numeric value: {point.value}")
             
-            print(f"DEBUG: Added {valid_points} valid data points to series")
+            self.logger.debug(f"Added {valid_points} valid data points to series")
             
             # Update axes ranges
             self._update_axes()
-            print("DEBUG: Axes updated")
+            self.logger.debug("Axes updated")
             
         except Exception as e:
-            print(f"ERROR in add_data_series: {e}")
+            self.logger.error(f"Error in add_data_series: {e}")
             import traceback
             traceback.print_exc()
     
@@ -233,6 +235,7 @@ class DeviceEmulatorClient(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        self.logger = logging.getLogger(f"{__name__}.DeviceEmulatorClient")
         self.api_thread = None
         self.data_manager = None
         self.historical_chart = None
@@ -706,43 +709,43 @@ class DeviceEmulatorClient(QMainWindow):
     def update_device_data_table(self):
         """Update the device data table in visualization tab"""
         try:
-            print("DEBUG: update_device_data_table called")
+            self.logger.debug("update_device_data_table called")
             
             if not self.data_manager:
-                print("ERROR: data_manager is None")
+                self.logger.error("data_manager is None")
                 return
                 
             if not self.device_data_table:
-                print("ERROR: device_data_table is None")
+                self.logger.error("device_data_table is None")
                 return
             
             # Get all data streams
             all_streams = self.data_manager.get_all_data_streams()
-            print(f"DEBUG: Found {len(all_streams)} devices with data streams")
+            self.logger.debug(f"Found {len(all_streams)} devices with data streams")
             
             # Check if data has changed since last update
             current_data_signature = self._get_data_signature(all_streams)
             if hasattr(self, '_last_data_signature') and current_data_signature == self._last_data_signature:
-                print("DEBUG: No new data detected, skipping table update")
+                self.logger.debug("No new data detected, skipping table update")
                 return
             
             # Store current data signature for next comparison
             self._last_data_signature = current_data_signature
-            print("DEBUG: New data detected, updating table")
+            self.logger.debug("New data detected, updating table")
             
             # Count total rows needed
             total_rows = sum(len(device_streams) for device_streams in all_streams.values())
-            print(f"DEBUG: Setting table to {total_rows} rows")
+            self.logger.debug(f"Setting table to {total_rows} rows")
             self.device_data_table.setRowCount(total_rows)
             
             row = 0
             for device_id, device_streams in all_streams.items():
-                print(f"DEBUG: Processing device {device_id} with {len(device_streams)} data types")
+                self.logger.debug(f"Processing device {device_id} with {len(device_streams)} data types")
                 for data_type, stream in device_streams.items():
                     latest_point = stream.get_latest_data_point()
                     
                     if latest_point:
-                        print(f"DEBUG: Adding row {row}: {device_id} - {data_type} = {latest_point.value}")
+                        self.logger.debug(f"Adding row {row}: {device_id} - {data_type} = {latest_point.value}")
                         
                         # Device ID
                         self.device_data_table.setItem(row, 0, QTableWidgetItem(device_id))
@@ -762,6 +765,16 @@ class DeviceEmulatorClient(QMainWindow):
                         
                         # Select checkbox
                         checkbox = QCheckBox()
+                        checkbox.setStyleSheet("""
+                            QCheckBox::indicator:checked {
+                                background-color: red;
+                                border: 1px solid black;
+                            }
+                            QCheckBox::indicator:unchecked {
+                                background-color: white;
+                                border: 1px solid black;
+                            }
+                        """)
                         series_key = f"{device_id}#{data_type}"
                         checkbox.setChecked(series_key in self.selected_series)
                         checkbox.stateChanged.connect(lambda state, key=series_key: self.on_series_selection_changed(key, state))
@@ -769,12 +782,12 @@ class DeviceEmulatorClient(QMainWindow):
                         
                         row += 1
                     else:
-                        print(f"WARNING: No latest data point for {device_id} - {data_type}")
+                        self.logger.warning(f"No latest data point for {device_id} - {data_type}")
             
-            print(f"DEBUG: Device data table updated with {row} rows")
+            self.logger.debug(f"Device data table updated with {row} rows")
             
         except Exception as e:
-            print(f"ERROR in update_device_data_table: {e}")
+            self.logger.error(f"Error in update_device_data_table: {e}")
             import traceback
             traceback.print_exc()
     
@@ -795,47 +808,47 @@ class DeviceEmulatorClient(QMainWindow):
             return "|".join(signature_parts)
             
         except Exception as e:
-            print(f"ERROR generating data signature: {e}")
+            self.logger.error(f"Error generating data signature: {e}")
             # Return a fallback signature that will always be different
             return f"error_{id(all_streams)}"
     
     def on_series_selection_changed(self, series_key, state):
         """Handle checkbox selection change for data series"""
         try:
-            print(f"DEBUG: Series selection changed - {series_key}, state: {state}")
+            self.logger.debug(f"Series selection changed - {series_key}, state: {state}")
             
             if state == Qt.CheckState.Checked.value:
                 self.selected_series.add(series_key)
-                print(f"DEBUG: Added {series_key} to selected_series")
+                self.logger.debug(f"Added {series_key} to selected_series")
                 
                 # Add series to chart
                 parts = series_key.split('#', 1)
                 if len(parts) == 2:
                     device_id, data_type = parts
-                    print(f"DEBUG: Adding chart series - Device: {device_id}, Data Type: {data_type}")
+                    self.logger.debug(f"Adding chart series - Device: {device_id}, Data Type: {data_type}")
                     
                     # Check if data is available before trying to update chart
                     if self.data_manager and self.data_manager.get_data_stream(device_id, data_type):
                         self.update_chart_series(device_id, data_type)
                     else:
-                        print(f"DEBUG: No data available for {device_id} - {data_type}, skipping chart update")
+                        self.logger.debug(f"No data available for {device_id} - {data_type}, skipping chart update")
                         self.statusBar().showMessage(f"No data available for {device_id} - {data_type}. Fetch data first.", 3000)
                 else:
-                    print(f"ERROR: Invalid series_key format: {series_key}")
+                    self.logger.error(f"Invalid series_key format: {series_key}")
             else:
                 self.selected_series.discard(series_key)
-                print(f"DEBUG: Removed {series_key} from selected_series")
+                self.logger.debug(f"Removed {series_key} from selected_series")
                 
                 # Remove series from chart
                 parts = series_key.split('#', 1)
                 if len(parts) == 2:
                     device_id, data_type = parts
-                    print(f"DEBUG: Removing chart series - Device: {device_id}, Data Type: {data_type}")
+                    self.logger.debug(f"Removing chart series - Device: {device_id}, Data Type: {data_type}")
                     self.historical_chart.remove_data_series(device_id, data_type)
                 else:
-                    print(f"ERROR: Invalid series_key format: {series_key}")
+                    self.logger.error(f"Invalid series_key format: {series_key}")
         except Exception as e:
-            print(f"ERROR in on_series_selection_changed: {e}")
+            self.logger.error(f"Error in on_series_selection_changed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -849,56 +862,56 @@ class DeviceEmulatorClient(QMainWindow):
     def update_chart_series(self, device_id, data_type):
         """Update a specific series in the chart"""
         try:
-            print(f"DEBUG: update_chart_series called - Device: {device_id}, Data Type: {data_type}")
+            self.logger.debug(f"update_chart_series called - Device: {device_id}, Data Type: {data_type}")
             
             if not self.data_manager:
-                print("ERROR: data_manager is None")
+                self.logger.error("data_manager is None")
                 return
                 
             if not self.historical_chart:
-                print("ERROR: historical_chart is None")
+                self.logger.error("historical_chart is None")
                 return
             
             # Debug: Show all available streams
             all_streams = self.data_manager.get_all_data_streams()
-            print(f"DEBUG: Available streams: {list(all_streams.keys())}")
+            self.logger.debug(f"Available streams: {list(all_streams.keys())}")
             for dev_id, dev_streams in all_streams.items():
-                print(f"DEBUG: Device {dev_id} has streams: {list(dev_streams.keys())}")
+                self.logger.debug(f"Device {dev_id} has streams: {list(dev_streams.keys())}")
             
             stream = self.data_manager.get_data_stream(device_id, data_type)
             if stream:
-                print(f"DEBUG: Stream found with {len(stream.data_points)} data points")
+                self.logger.debug(f"Stream found with {len(stream.data_points)} data points")
                 
                 # Get all data points from the stream
                 data_points = list(stream.data_points)
                 if data_points:
-                    print(f"DEBUG: Adding {len(data_points)} data points to chart")
+                    self.logger.debug(f"Adding {len(data_points)} data points to chart")
                     
                     # Generate a color for this series
                     color = self.get_series_color(device_id, data_type)
-                    print(f"DEBUG: Generated color: {color}")
+                    self.logger.debug(f"Generated color: {color}")
                     
                     self.historical_chart.add_data_series(device_id, data_type, data_points, color)
-                    print("DEBUG: Chart series added successfully")
+                    self.logger.debug("Chart series added successfully")
                 else:
-                    print("WARNING: No data points in stream")
+                    self.logger.warning("No data points in stream")
             else:
-                print(f"WARNING: Stream not found for {device_id} - {data_type}")
-                print(f"DEBUG: This might be because:")
-                print(f"DEBUG: 1. No data has been fetched yet for this device/data_type")
-                print(f"DEBUG: 2. The device/data_type combination doesn't exist in the emulator")
-                print(f"DEBUG: 3. There's a timing issue between table display and data availability")
-                print(f"DEBUG: Available devices: {list(all_streams.keys())}")
+                self.logger.warning(f"Stream not found for {device_id} - {data_type}")
+                self.logger.debug("This might be because:")
+                self.logger.debug("1. No data has been fetched yet for this device/data_type")
+                self.logger.debug("2. The device/data_type combination doesn't exist in the emulator")
+                self.logger.debug("3. There's a timing issue between table display and data availability")
+                self.logger.debug(f"Available devices: {list(all_streams.keys())}")
                 if device_id in all_streams:
-                    print(f"DEBUG: Device {device_id} exists, available data types: {list(all_streams[device_id].keys())}")
+                    self.logger.debug(f"Device {device_id} exists, available data types: {list(all_streams[device_id].keys())}")
                 else:
-                    print(f"DEBUG: Device {device_id} does not exist in available streams")
+                    self.logger.debug(f"Device {device_id} does not exist in available streams")
                 
                 # Show user-friendly message in status bar
                 self.statusBar().showMessage(f"No data available for {device_id} - {data_type}. Try fetching data first.", 3000)
                 
         except Exception as e:
-            print(f"ERROR in update_chart_series: {e}")
+            self.logger.error(f"Error in update_chart_series: {e}")
             import traceback
             traceback.print_exc()
     
@@ -925,24 +938,24 @@ class DeviceEmulatorClient(QMainWindow):
     def debug_data_state(self):
         """Debug method to show current data state"""
         if not self.data_manager:
-            print("DEBUG: No data_manager available")
+            self.logger.debug("No data_manager available")
             return
         
-        print("=== DATA STATE DEBUG ===")
+        self.logger.debug("=== DATA STATE DEBUG ===")
         all_streams = self.data_manager.get_all_data_streams()
-        print(f"Total devices: {len(all_streams)}")
+        self.logger.debug(f"Total devices: {len(all_streams)}")
         
         for device_id, device_streams in all_streams.items():
-            print(f"Device: {device_id}")
+            self.logger.debug(f"Device: {device_id}")
             for data_type, stream in device_streams.items():
                 latest_point = stream.get_latest_data_point()
                 if latest_point:
-                    print(f"  - {data_type}: {latest_point.value} ({latest_point.unit}) at {latest_point.timestamp}")
+                    self.logger.debug(f"  - {data_type}: {latest_point.value} ({latest_point.unit}) at {latest_point.timestamp}")
                 else:
-                    print(f"  - {data_type}: No data points")
+                    self.logger.debug(f"  - {data_type}: No data points")
         
-        print(f"Selected series: {list(self.selected_series)}")
-        print("=== END DEBUG ===")
+        self.logger.debug(f"Selected series: {list(self.selected_series)}")
+        self.logger.debug("=== END DEBUG ===")
     
     def toggle_auto_fetch(self):
         """Toggle automatic data fetching"""
@@ -1007,12 +1020,12 @@ class DeviceEmulatorClient(QMainWindow):
         # Check if data has changed since last update
         current_data_signature = self._get_latest_data_signature(latest_data)
         if hasattr(self, '_last_latest_data_signature') and current_data_signature == self._last_latest_data_signature:
-            print("DEBUG: No new latest data detected, skipping data table update")
+            self.logger.debug("No new latest data detected, skipping data table update")
             return
         
         # Store current data signature for next comparison
         self._last_latest_data_signature = current_data_signature
-        print("DEBUG: New latest data detected, updating data table")
+        self.logger.debug("New latest data detected, updating data table")
         
         # Count total data points
         total_points = sum(len(device_data) for device_data in latest_data.values() if isinstance(device_data, dict))
@@ -1049,7 +1062,7 @@ class DeviceEmulatorClient(QMainWindow):
             return "|".join(signature_parts)
             
         except Exception as e:
-            print(f"ERROR generating latest data signature: {e}")
+            self.logger.error(f"Error generating latest data signature: {e}")
             # Return a fallback signature that will always be different
             return f"error_{id(latest_data)}"
         
@@ -1098,9 +1111,21 @@ class DeviceEmulatorClient(QMainWindow):
 
 def main():
     """Main function"""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Device Emulator Qt API Client")
+    parser.add_argument('-l', '--log-level', 
+                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                       default='ERROR',
+                       help='Set the logging level (default: ERROR)')
+    
+    args = parser.parse_args()
+    
+    # Convert string to logging level
+    log_level = getattr(logging, args.log_level.upper())
+    
     # Setup logging
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout),  # Console output
