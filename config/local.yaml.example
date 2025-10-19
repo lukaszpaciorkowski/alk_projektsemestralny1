@@ -1,0 +1,24 @@
+# Local configuration example
+# Copy this file to local.yaml and modify as needed
+
+# Override default settings for local development
+device_emulator:
+  communication:
+    host: "127.0.0.1"
+    port: 8081
+    
+  simulation:
+    enable_noise: false
+    enable_drift: false
+
+qt_client:
+  ui:
+    theme: "dark"
+    window_size: [1600, 900]
+    
+  visualization:
+    update_interval: 50
+    max_data_points: 2000
+
+logging:
+  level: "DEBUG"
