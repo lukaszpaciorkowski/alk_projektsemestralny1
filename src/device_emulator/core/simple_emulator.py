@@ -3,10 +3,13 @@ Simplified single-threaded emulator
 """
 
 import asyncio
+import csv
+import json
 import logging
 import time
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from shared.models.config import DeviceConfig, DeviceDefinition
 from shared.models.device_data import DeviceData
@@ -243,3 +246,110 @@ class SimpleEmulator:
                 return self.latest_data.get(device_id, {})
         else:
             return self.latest_data
+    
+    def generate_and_export_to_csv(self, duration_seconds: int, csv_file_path: str):
+        """Generate data instantly for specified duration and save to CSV file"""
+        self.logger.info(f"Starting instant data generation for {duration_seconds} seconds")
+        self.logger.info(f"Data will be saved to: {csv_file_path}")
+        
+        # Calculate start time
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=duration_seconds)
+        
+        # Collect all generated data points
+        all_data_points: List[DeviceData] = []
+        
+        # Generate all data points instantly
+        for device_id, device in self.devices.items():
+            for data_type_name in device.get_available_data_types():
+                try:
+                    # Get data config for this type
+                    data_config = next(dc for dc in device.data_configs if dc.name == data_type_name)
+                    
+                    # Calculate number of points to generate based on frequency and duration
+                    if data_config.frequency > 0:
+                        num_points = int(data_config.frequency * duration_seconds)
+                    else:
+                        # If frequency is 0, generate one point at the start
+                        num_points = 1
+                    
+                    if num_points == 0:
+                        num_points = 1  # At least one point
+                    
+                    self.logger.debug(f"Generating {num_points} points for {device_id}.{data_type_name}")
+                    
+                    # Calculate time interval between points
+                    if num_points > 1:
+                        time_interval = duration_seconds / (num_points - 1)
+                    else:
+                        time_interval = 0
+                    
+                    # Generate all points instantly with distributed timestamps
+                    for i in range(num_points):
+                        # Calculate timestamp for this point
+                        point_time = start_time + timedelta(seconds=i * time_interval)
+                        
+                        # Generate data point
+                        device_data = device.generate_device_data(data_type_name)
+                        
+                        # Create new DeviceData instance with custom timestamp
+                        device_data_with_timestamp = DeviceData(
+                            device_id=device_data.device_id,
+                            timestamp=point_time,
+                            data_type=device_data.data_type,
+                            value=device_data.value,
+                            unit=device_data.unit,
+                            metadata=device_data.metadata
+                        )
+                        
+                        # Add to collection
+                        all_data_points.append(device_data_with_timestamp)
+                        
+                        # Store latest data for API access (if needed)
+                        self.latest_data[device_id][data_type_name] = device_data_with_timestamp
+                    
+                    self.logger.debug(f"Generated {num_points} points for {device_id}.{data_type_name}")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error generating data for {device_id}.{data_type_name}: {e}")
+        
+        # Save to CSV file
+        self._save_data_to_csv(all_data_points, csv_file_path)
+        
+        self.logger.info(f"Generated {len(all_data_points)} data points and saved to {csv_file_path}")
+        return len(all_data_points)
+    
+    def _save_data_to_csv(self, data_points: List[DeviceData], csv_file_path: str):
+        """Save data points to CSV file"""
+        try:
+            # Ensure directory exists
+            csv_path = Path(csv_file_path)
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write CSV file with headers
+            with open(csv_file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                
+                # Write header
+                writer.writerow(['device_id', 'data_type', 'value', 'timestamp', 'unit', 'metadata'])
+                
+                # Write data points
+                for device_data in data_points:
+                    # Convert metadata to JSON string
+                    metadata_str = json.dumps(device_data.metadata) if device_data.metadata else ""
+                    
+                    # Write row
+                    writer.writerow([
+                        device_data.device_id,
+                        device_data.data_type,
+                        device_data.value,
+                        device_data.timestamp.isoformat(),
+                        device_data.unit,
+                        metadata_str
+                    ])
+            
+            self.logger.info(f"Successfully saved {len(data_points)} data points to {csv_file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving data to CSV file: {e}")
+            raise

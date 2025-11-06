@@ -128,6 +128,8 @@ def main():
     parser.add_argument("--device", type=str, help="Run only specific device ID")
     parser.add_argument("--list-devices", action="store_true", help="List all devices in config")
     parser.add_argument("--device-info", type=str, help="Show detailed info for specific device")
+    parser.add_argument("--generate-csv", type=str, metavar="FILE", 
+                       help="Generate data instantly and save to CSV file (requires --duration)")
     
     args = parser.parse_args()
     
@@ -188,6 +190,29 @@ def main():
                 return 1
             config.devices = [device]
             logger.info(f"Running only device: {device.device_name}")
+        
+        # Check if CSV generation mode is requested
+        if args.generate_csv:
+            if not args.duration:
+                logger.error("--duration is required when using --generate-csv")
+                return 1
+            
+            logger.info(f"Generating data for {args.duration} seconds and saving to {args.generate_csv}")
+            
+            # Create emulator instance
+            emulator = SimpleEmulator(config)
+            
+            # Generate and export to CSV
+            try:
+                count = emulator.generate_and_export_to_csv(args.duration, args.generate_csv)
+                logger.info(f"Successfully generated {count} data points and saved to {args.generate_csv}")
+                return 0
+            except Exception as e:
+                logger.error(f"Error generating CSV data: {e}")
+                if args.verbose:
+                    import traceback
+                    traceback.print_exc()
+                return 1
         
         # Setup signal handlers
         signal.signal(signal.SIGINT, signal_handler)
