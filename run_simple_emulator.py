@@ -15,8 +15,8 @@ from pathlib import Path
 # Add src to Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from shared.utils.config_loader import ConfigLoader
-from device_emulator.core.simple_emulator import SimpleEmulator
+from src.shared.utils.config_loader import ConfigLoader
+from src.device_emulator.core.simple_emulator import SimpleEmulator
 
 
 class EmulatorRunner:

@@ -1,0 +1,6 @@
+Device ID,Data Type,Latest Value,Unit,Number of Points,Min,Max,Mean,Std Dev
+temp_sensor_001,temperature,24.139981738186837,°C,158,17.1366,27.0547,22.1341,2.3287
+temp_sensor_002,temperature,22.521875561895165,°C,158,20.3338,25.2644,22.9023,1.1855
+pressure_sensor_001,pressure,0.6422298280511523,bar,316,0.1789,1.1176,0.5701,0.2038
+motor_controller_001,rpm,5,RPM,1579,0,52,10.2267,12.0538
+motor_controller_002,rpm,4,RPM,1053,0,31,6.0684,6.8406
