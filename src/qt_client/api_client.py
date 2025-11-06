@@ -5,15 +5,17 @@ Simple Qt application for connecting to the device emulator REST API
 
 import sys
 import json
+import csv
 import logging
 import argparse
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                              QComboBox, QTextEdit, QGroupBox, QGridLayout,
                              QMessageBox, QSplitter, QTabWidget, QTableWidget,
                              QTableWidgetItem, QHeaderView, QFrame, QCheckBox,
-                             QScrollArea, QSizePolicy, QSpinBox)
+                             QScrollArea, QSizePolicy, QSpinBox, QFileDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QFont, QPalette, QColor, QPen, QBrush
 
@@ -73,8 +75,8 @@ except ImportError:
 
 # Import handling for both package and direct execution
 try:
-    from .api_client_thread import ApiClientThread
-    from .data_manager import DataManager, DataPoint
+    from api_client_thread import ApiClientThread
+    from data_manager import DataManager, DataPoint
 except ImportError:
     # Fallback for direct execution
     from api_client_thread import ApiClientThread
@@ -95,16 +97,16 @@ class HistoricalDataChart(QChartView):
             self.chart.legend().setVisible(True)
             self.chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
             
-            # Create axes
+            # Create time axis (shared by all series)
             self.time_axis = QDateTimeAxis()
             self.time_axis.setFormat("hh:mm:ss")
             self.time_axis.setTitleText("Time")
-            
-            self.value_axis = QValueAxis()
-            self.value_axis.setTitleText("Value")
-            
             self.chart.addAxis(self.time_axis, Qt.AlignmentFlag.AlignBottom)
-            self.chart.addAxis(self.value_axis, Qt.AlignmentFlag.AlignLeft)
+            
+            # Store value axes for each unit
+            self.value_axes = {}  # unit -> QValueAxis
+            self.axis_positions = {}  # unit -> alignment position
+            self.next_axis_position = 0  # Track next available position
         else:
             # Fallback mode - just show a message
             self.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
@@ -132,8 +134,19 @@ class HistoricalDataChart(QChartView):
                 self.logger.warning("Charts not available, cannot add series")
                 return
                 
+            if not data_points:
+                self.logger.warning("No data points provided")
+                return
+                
             series_key = f"{device_id}#{data_type}"
             self.logger.debug(f"Series key: {series_key}")
+            
+            # Get the unit from the first data point
+            unit = data_points[0].unit if data_points else ""
+            self.logger.debug(f"Unit for series: '{unit}'")
+            
+            # Get or create value axis for this unit
+            value_axis = self._get_or_create_value_axis(unit)
             
             if series_key in self.series_dict:
                 # Update existing series
@@ -150,7 +163,7 @@ class HistoricalDataChart(QChartView):
                     self.logger.debug(f"Set series color: {color}")
                 self.chart.addSeries(series)
                 series.attachAxis(self.time_axis)
-                series.attachAxis(self.value_axis)
+                series.attachAxis(value_axis)
                 self.series_dict[series_key] = series
                 self.logger.debug("Series added to chart")
             
@@ -184,8 +197,16 @@ class HistoricalDataChart(QChartView):
         series_key = f"{device_id}#{data_type}"
         if series_key in self.series_dict:
             series = self.series_dict[series_key]
+            
+            # Get the unit for this series before removing it
+            unit = self._get_series_unit(series)
+            
             self.chart.removeSeries(series)
             del self.series_dict[series_key]
+            
+            # Check if we need to remove the axis for this unit
+            self._cleanup_unused_axes()
+            
             self._update_axes()
     
     def clear_all_series(self):
@@ -196,26 +217,95 @@ class HistoricalDataChart(QChartView):
         for series in self.series_dict.values():
             self.chart.removeSeries(series)
         self.series_dict.clear()
+        
+        # Remove all value axes
+        for value_axis in self.value_axes.values():
+            self.chart.removeAxis(value_axis)
+        self.value_axes.clear()
+        self.axis_positions.clear()
+        self.next_axis_position = 0
+        
         self._update_axes()
+    
+    def _get_or_create_value_axis(self, unit: str):
+        """Get or create a value axis for the given unit"""
+        if unit not in self.value_axes:
+            # Create new value axis for this unit
+            value_axis = QValueAxis()
+            value_axis.setTitleText(f"Value ({unit})" if unit else "Value")
+            # Note: setFormat is not available in PyQt6 QValueAxis
+            
+            # Determine alignment position (left or right)
+            if self.next_axis_position % 2 == 0:
+                alignment = Qt.AlignmentFlag.AlignLeft
+            else:
+                alignment = Qt.AlignmentFlag.AlignRight
+            
+            self.chart.addAxis(value_axis, alignment)
+            self.value_axes[unit] = value_axis
+            self.axis_positions[unit] = alignment
+            self.next_axis_position += 1
+            
+            self.logger.debug(f"Created new value axis for unit '{unit}' with alignment {alignment}")
+        
+        return self.value_axes[unit]
+    
+    def _get_series_unit(self, series):
+        """Get the unit for a given series by finding its attached value axis"""
+        if not CHARTS_AVAILABLE:
+            return ""
+            
+        attached_axes = series.attachedAxes()
+        for axis in attached_axes:
+            if isinstance(axis, QValueAxis):
+                # Find which unit this axis belongs to
+                for unit, value_axis in self.value_axes.items():
+                    if value_axis == axis:
+                        return unit
+        return ""
+    
+    def _cleanup_unused_axes(self):
+        """Remove axes that are no longer used by any series"""
+        if not CHARTS_AVAILABLE:
+            return
+            
+        # Find which units are still in use
+        units_in_use = set()
+        for series in self.series_dict.values():
+            unit = self._get_series_unit(series)
+            if unit:
+                units_in_use.add(unit)
+        
+        # Remove axes for units that are no longer in use
+        units_to_remove = []
+        for unit in self.value_axes.keys():
+            if unit not in units_in_use:
+                units_to_remove.append(unit)
+        
+        for unit in units_to_remove:
+            value_axis = self.value_axes[unit]
+            self.chart.removeAxis(value_axis)
+            del self.value_axes[unit]
+            del self.axis_positions[unit]
+            self.logger.debug(f"Removed unused axis for unit '{unit}'")
+        
+        # Reset axis position counter if we removed all axes
+        if not self.value_axes:
+            self.next_axis_position = 0
     
     def _update_axes(self):
         """Update axis ranges based on data"""
         if not CHARTS_AVAILABLE or not self.series_dict:
             return
         
+        # Update time axis (shared by all series)
         min_time = float('inf')
         max_time = float('-inf')
-        min_value = float('inf')
-        max_value = float('-inf')
         
         for series in self.series_dict.values():
             if series.count() > 0:
                 min_time = min(min_time, series.at(0).x())
                 max_time = max(max_time, series.at(series.count() - 1).x())
-                
-                for i in range(series.count()):
-                    min_value = min(min_value, series.at(i).y())
-                    max_value = max(max_value, series.at(i).y())
         
         if min_time != float('inf') and max_time != float('-inf'):
             # Convert milliseconds since epoch to QDateTime objects
@@ -224,10 +314,28 @@ class HistoricalDataChart(QChartView):
             max_qdatetime = QDateTime.fromMSecsSinceEpoch(int(max_time))
             self.time_axis.setRange(min_qdatetime, max_qdatetime)
         
-        if min_value != float('inf') and max_value != float('-inf'):
-            # Add some padding to the value range
-            padding = (max_value - min_value) * 0.1
-            self.value_axis.setRange(min_value - padding, max_value + padding)
+        # Update each value axis based on its associated series
+        for unit, value_axis in self.value_axes.items():
+            min_value = float('inf')
+            max_value = float('-inf')
+            
+            # Find all series that use this axis
+            for series_key, series in self.series_dict.items():
+                # Check if this series uses this axis by looking at attached axes
+                attached_axes = series.attachedAxes()
+                if value_axis in attached_axes and series.count() > 0:
+                    for i in range(series.count()):
+                        min_value = min(min_value, series.at(i).y())
+                        max_value = max(max_value, series.at(i).y())
+            
+            # Update axis range if we have data
+            if min_value != float('inf') and max_value != float('-inf'):
+                # Add some padding to the value range
+                padding = (max_value - min_value) * 0.1
+                if padding == 0:  # Handle case where all values are the same
+                    padding = abs(max_value) * 0.1 if max_value != 0 else 1.0
+                value_axis.setRange(min_value - padding, max_value + padding)
+                self.logger.debug(f"Updated axis for unit '{unit}': {min_value - padding:.2f} to {max_value + padding:.2f}")
 
 
 class DeviceEmulatorClient(QMainWindow):
@@ -261,15 +369,15 @@ class DeviceEmulatorClient(QMainWindow):
         # Create main layout
         main_layout = QVBoxLayout(central_widget)
         
-        # Create connection settings
-        self.create_connection_group(main_layout)
-        
         # Create tab widget
         self.tab_widget = QTabWidget()
         main_layout.addWidget(self.tab_widget)
         
         # Create API Management tab
         self.create_api_management_tab()
+        
+        # Create CSV Loader tab
+        self.create_csv_loader_tab()
         
         # Create Data Visualization tab
         self.create_visualization_tab()
@@ -280,7 +388,13 @@ class DeviceEmulatorClient(QMainWindow):
     def create_connection_group(self, parent_layout):
         """Create connection settings group"""
         group = QGroupBox("Server Connection")
+        
+        # Set size policy to prevent vertical expansion
+        group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        group.setMaximumHeight(80)  # Constrain height to prevent expansion
+        
         layout = QGridLayout(group)
+        layout.setContentsMargins(10, 10, 10, 10)  # Add some padding
         
         # Server URL
         layout.addWidget(QLabel("Server URL:"), 0, 0)
@@ -304,6 +418,9 @@ class DeviceEmulatorClient(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
+        # Create connection settings at the top of the tab
+        self.create_connection_group(layout)
+        
         # Create splitter for main content
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter)
@@ -318,6 +435,86 @@ class DeviceEmulatorClient(QMainWindow):
         splitter.setSizes([400, 800])
         
         self.tab_widget.addTab(tab, "API Management")
+    
+    def create_csv_loader_tab(self):
+        """Create the CSV Loader tab"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # CSV Loader group
+        csv_group = QGroupBox("CSV File Loader")
+        csv_layout = QVBoxLayout(csv_group)
+        
+        # File selection
+        file_layout = QHBoxLayout()
+        file_layout.addWidget(QLabel("CSV File:"))
+        
+        self.csv_file_path = QLineEdit()
+        self.csv_file_path.setPlaceholderText("Select a CSV file to load...")
+        self.csv_file_path.setReadOnly(True)
+        file_layout.addWidget(self.csv_file_path)
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_csv_file)
+        file_layout.addWidget(browse_btn)
+        
+        csv_layout.addLayout(file_layout)
+        
+        # CSV format info
+        format_info = QLabel(
+            "Expected CSV format: device_id, data_type, value, timestamp, unit (optional), metadata (optional)\n"
+            "Headers are optional. Timestamp format: ISO format (YYYY-MM-DDTHH:MM:SS) or Unix timestamp"
+        )
+        format_info.setWordWrap(True)
+        format_info.setStyleSheet("color: #666; font-size: 10pt; padding: 5px;")
+        csv_layout.addWidget(format_info)
+        
+        # Load button
+        load_btn = QPushButton("Load CSV Data")
+        load_btn.clicked.connect(self.load_csv_data)
+        load_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
+        csv_layout.addWidget(load_btn)
+        
+        # Status and statistics
+        stats_layout = QHBoxLayout()
+        self.csv_status_label = QLabel("Status: Ready to load CSV file")
+        stats_layout.addWidget(self.csv_status_label)
+        
+        stats_layout.addStretch()
+        csv_layout.addLayout(stats_layout)
+        
+        layout.addWidget(csv_group)
+        
+        # Preview table
+        preview_group = QGroupBox("CSV Preview (First 10 rows)")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self.csv_preview_table = QTableWidget()
+        self.csv_preview_table.setColumnCount(6)
+        self.csv_preview_table.setHorizontalHeaderLabels([
+            "Device ID", "Data Type", "Value", "Timestamp", "Unit", "Metadata"
+        ])
+        self.csv_preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.csv_preview_table.setMaximumHeight(250)
+        preview_layout.addWidget(self.csv_preview_table)
+        
+        layout.addWidget(preview_group)
+        
+        # Load statistics
+        stats_group = QGroupBox("Load Statistics")
+        stats_layout = QVBoxLayout(stats_group)
+        
+        self.csv_stats_text = QTextEdit()
+        self.csv_stats_text.setReadOnly(True)
+        self.csv_stats_text.setMaximumHeight(150)
+        self.csv_stats_text.setFont(QFont("Consolas", 9))
+        stats_layout.addWidget(self.csv_stats_text)
+        
+        layout.addWidget(stats_group)
+        
+        layout.addStretch()
+        
+        self.tab_widget.addTab(tab, "CSV Loader")
         
     def create_visualization_tab(self):
         """Create the Data Visualization tab"""
@@ -1098,6 +1295,362 @@ class DeviceEmulatorClient(QMainWindow):
                         self.data_table.setItem(row, 3, QTableWidgetItem(data_point.get("unit", "")))
                         row += 1
                         
+    def browse_csv_file(self):
+        """Open file dialog to select CSV file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV File",
+            "",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        
+        if file_path:
+            self.csv_file_path.setText(file_path)
+            self.preview_csv_file(file_path)
+    
+    def preview_csv_file(self, file_path: str):
+        """Preview CSV file content"""
+        try:
+            self.csv_preview_table.setRowCount(0)
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                # Try to detect if file has headers
+                sample = f.read(1024)
+                f.seek(0)
+                has_header = csv.Sniffer().has_header(sample)
+                
+                if has_header:
+                    reader = csv.DictReader(f)
+                    rows = list(reader)
+                    
+                    # Show first 10 rows
+                    preview_rows = min(10, len(rows))
+                    self.csv_preview_table.setRowCount(preview_rows)
+                    
+                    for i, row in enumerate(rows[:preview_rows]):
+                        device_id = row.get('device_id', '')
+                        data_type = row.get('data_type', '')
+                        value = row.get('value', '')
+                        timestamp = row.get('timestamp', '')
+                        unit = row.get('unit', '')
+                        metadata = row.get('metadata', '')
+                        
+                        self.csv_preview_table.setItem(i, 0, QTableWidgetItem(device_id))
+                        self.csv_preview_table.setItem(i, 1, QTableWidgetItem(data_type))
+                        self.csv_preview_table.setItem(i, 2, QTableWidgetItem(str(value)))
+                        self.csv_preview_table.setItem(i, 3, QTableWidgetItem(timestamp))
+                        self.csv_preview_table.setItem(i, 4, QTableWidgetItem(unit))
+                        self.csv_preview_table.setItem(i, 5, QTableWidgetItem(metadata))
+                    
+                    self.csv_status_label.setText(f"Preview: {len(rows)} rows found in CSV file (with headers)")
+                else:
+                    # No headers, assume order
+                    reader = csv.reader(f)
+                    rows = list(reader)
+                    
+                    # Show first 10 rows
+                    preview_rows = min(10, len(rows))
+                    self.csv_preview_table.setRowCount(preview_rows)
+                    
+                    for i, row in enumerate(rows[:preview_rows]):
+                        device_id = row[0] if len(row) > 0 else ''
+                        data_type = row[1] if len(row) > 1 else ''
+                        value = row[2] if len(row) > 2 else ''
+                        timestamp = row[3] if len(row) > 3 else ''
+                        unit = row[4] if len(row) > 4 else ''
+                        metadata = row[5] if len(row) > 5 else ''
+                        
+                        self.csv_preview_table.setItem(i, 0, QTableWidgetItem(device_id))
+                        self.csv_preview_table.setItem(i, 1, QTableWidgetItem(data_type))
+                        self.csv_preview_table.setItem(i, 2, QTableWidgetItem(str(value)))
+                        self.csv_preview_table.setItem(i, 3, QTableWidgetItem(timestamp))
+                        self.csv_preview_table.setItem(i, 4, QTableWidgetItem(unit))
+                        self.csv_preview_table.setItem(i, 5, QTableWidgetItem(metadata))
+                    
+                    self.csv_status_label.setText(f"Preview: {len(rows)} rows found in CSV file (no headers, using column order)")
+            
+        except Exception as e:
+            self.logger.error(f"Error previewing CSV file: {e}")
+            QMessageBox.warning(self, "Preview Error", f"Error previewing CSV file: {str(e)}")
+            self.csv_status_label.setText(f"Error: {str(e)}")
+    
+    def load_csv_data(self):
+        """Load CSV data into DataManager"""
+        file_path = self.csv_file_path.text().strip()
+        
+        if not file_path:
+            QMessageBox.warning(self, "No File Selected", "Please select a CSV file first")
+            return
+        
+        # Ask user if they want to clear existing data
+        if self.data_manager and self.data_manager.data_streams:
+            reply = QMessageBox.question(
+                self,
+                "Clear Existing Data?",
+                "Loading CSV will clear all existing data in DataManager.\n"
+                "Do you want to continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+        
+        if not self.data_manager:
+            # Create a new DataManager if not connected to API
+            from data_manager import DataManager
+            self.data_manager = DataManager()
+            self.logger.info("Created new DataManager for CSV data")
+        else:
+            # Clear existing data streams before loading new data
+            self.logger.info("Clearing existing data from DataManager")
+            self.data_manager.data_streams.clear()
+        
+        # Clear chart and selected series
+        if self.historical_chart:
+            self.historical_chart.clear_all_series()
+        self.selected_series.clear()
+        
+        # Uncheck all checkboxes in device data table
+        if self.device_data_table:
+            for row in range(self.device_data_table.rowCount()):
+                checkbox = self.device_data_table.cellWidget(row, 5)
+                if checkbox:
+                    checkbox.setChecked(False)
+        
+        try:
+            loaded_data = self.parse_csv_file(file_path)
+            
+            if not loaded_data:
+                QMessageBox.warning(self, "Load Error", "No valid data found in CSV file")
+                return
+            
+            # Process data using DataManager
+            processed_count = 0
+            error_count = 0
+            
+            for device_id, device_data in loaded_data.items():
+                for data_type, data_points in device_data.items():
+                    for data_point_dict in data_points:
+                        try:
+                            # Create DataPoint
+                            from data_manager import DataPoint
+                            data_point = DataPoint(
+                                value=data_point_dict["value"],
+                                timestamp=data_point_dict["timestamp"],
+                                unit=data_point_dict.get("unit", ""),
+                                metadata=data_point_dict.get("metadata", {})
+                            )
+                            
+                            # Get or create data stream
+                            if device_id not in self.data_manager.data_streams:
+                                self.data_manager.data_streams[device_id] = {}
+                            
+                            if data_type not in self.data_manager.data_streams[device_id]:
+                                from data_manager import DataStream
+                                self.data_manager.data_streams[device_id][data_type] = DataStream(device_id, data_type)
+                            
+                            # Add data point
+                            stream = self.data_manager.data_streams[device_id][data_type]
+                            stream.add_data_point(data_point)
+                            processed_count += 1
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error processing data point: {e}")
+                            error_count += 1
+                            continue
+            
+            # Update statistics
+            stats_text = f"CSV Load Complete!\n"
+            stats_text += f"Processed: {processed_count} data points\n"
+            stats_text += f"Errors: {error_count}\n"
+            stats_text += f"Devices: {len(loaded_data)}\n"
+            
+            total_data_types = sum(len(device_data) for device_data in loaded_data.values())
+            stats_text += f"Data Types: {total_data_types}"
+            
+            self.csv_stats_text.setPlainText(stats_text)
+            self.csv_status_label.setText(f"Status: Successfully loaded {processed_count} data points")
+            
+            # Show success message
+            QMessageBox.information(
+                self,
+                "CSV Load Complete",
+                f"Successfully loaded {processed_count} data points from CSV file.\n"
+                f"Errors: {error_count}\n\n"
+                f"Data is now available in the Data Visualization tab."
+            )
+            
+            # Refresh UI to show new data
+            self.refresh_device_data()
+            
+        except Exception as e:
+            self.logger.error(f"Error loading CSV file: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Load Error", f"Error loading CSV file: {str(e)}")
+            self.csv_status_label.setText(f"Error: {str(e)}")
+    
+    def parse_csv_file(self, file_path: str) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        """Parse CSV file and return data in DataManager format"""
+        loaded_data = {}
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                # Try to detect if file has headers
+                sample = f.read(1024)
+                f.seek(0)
+                has_header = csv.Sniffer().has_header(sample)
+                
+                reader = csv.DictReader(f) if has_header else csv.reader(f)
+                
+                if has_header:
+                    # Process with headers
+                    for row_num, row in enumerate(reader, start=2):
+                        try:
+                            device_id = row.get('device_id', '').strip()
+                            data_type = row.get('data_type', '').strip()
+                            value_str = row.get('value', '').strip()
+                            timestamp_str = row.get('timestamp', '').strip()
+                            unit = row.get('unit', '').strip()
+                            metadata_str = row.get('metadata', '').strip()
+                            
+                            if not device_id or not data_type or not value_str or not timestamp_str:
+                                self.logger.warning(f"Skipping row {row_num}: missing required fields")
+                                continue
+                            
+                            # Parse value (try numeric first, then string)
+                            try:
+                                if '.' in value_str:
+                                    value = float(value_str)
+                                else:
+                                    value = int(value_str)
+                            except ValueError:
+                                value = value_str
+                            
+                            # Parse timestamp
+                            timestamp = self.parse_timestamp(timestamp_str)
+                            if not timestamp:
+                                self.logger.warning(f"Skipping row {row_num}: invalid timestamp format")
+                                continue
+                            
+                            # Parse metadata (JSON string if provided)
+                            metadata = {}
+                            if metadata_str:
+                                try:
+                                    metadata = json.loads(metadata_str)
+                                except json.JSONDecodeError:
+                                    metadata = {"raw": metadata_str}
+                            
+                            # Organize by device_id and data_type
+                            if device_id not in loaded_data:
+                                loaded_data[device_id] = {}
+                            
+                            if data_type not in loaded_data[device_id]:
+                                loaded_data[device_id][data_type] = []
+                            
+                            loaded_data[device_id][data_type].append({
+                                "value": value,
+                                "timestamp": timestamp,
+                                "unit": unit,
+                                "metadata": metadata
+                            })
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error parsing row {row_num}: {e}")
+                            continue
+                
+                else:
+                    # Process without headers (assume order: device_id, data_type, value, timestamp, unit, metadata)
+                    for row_num, row in enumerate(reader, start=1):
+                        try:
+                            if len(row) < 4:
+                                self.logger.warning(f"Skipping row {row_num}: insufficient columns")
+                                continue
+                            
+                            device_id = row[0].strip()
+                            data_type = row[1].strip()
+                            value_str = row[2].strip()
+                            timestamp_str = row[3].strip()
+                            unit = row[4].strip() if len(row) > 4 else ""
+                            metadata_str = row[5].strip() if len(row) > 5 else ""
+                            
+                            if not device_id or not data_type or not value_str or not timestamp_str:
+                                continue
+                            
+                            # Parse value
+                            try:
+                                if '.' in value_str:
+                                    value = float(value_str)
+                                else:
+                                    value = int(value_str)
+                            except ValueError:
+                                value = value_str
+                            
+                            # Parse timestamp
+                            timestamp = self.parse_timestamp(timestamp_str)
+                            if not timestamp:
+                                continue
+                            
+                            # Parse metadata
+                            metadata = {}
+                            if metadata_str:
+                                try:
+                                    metadata = json.loads(metadata_str)
+                                except json.JSONDecodeError:
+                                    metadata = {"raw": metadata_str}
+                            
+                            # Organize by device_id and data_type
+                            if device_id not in loaded_data:
+                                loaded_data[device_id] = {}
+                            
+                            if data_type not in loaded_data[device_id]:
+                                loaded_data[device_id][data_type] = []
+                            
+                            loaded_data[device_id][data_type].append({
+                                "value": value,
+                                "timestamp": timestamp,
+                                "unit": unit,
+                                "metadata": metadata
+                            })
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error parsing row {row_num}: {e}")
+                            continue
+        
+        except Exception as e:
+            self.logger.error(f"Error reading CSV file: {e}")
+            raise
+        
+        return loaded_data
+    
+    def parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
+        """Parse timestamp from string (ISO format or Unix timestamp)"""
+        try:
+            # Try ISO format first
+            return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        except ValueError:
+            try:
+                # Try Unix timestamp (seconds)
+                timestamp_float = float(timestamp_str)
+                if timestamp_float < 1e10:  # Seconds
+                    return datetime.fromtimestamp(timestamp_float)
+                else:  # Milliseconds
+                    return datetime.fromtimestamp(timestamp_float / 1000.0)
+            except (ValueError, OSError):
+                # Try common formats
+                formats = [
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S.%f",
+                    "%Y-%m-%dT%H:%M:%S.%f",
+                ]
+                for fmt in formats:
+                    try:
+                        return datetime.strptime(timestamp_str, fmt)
+                    except ValueError:
+                        continue
+                return None
+    
     def closeEvent(self, event):
         """Handle application close"""
         # Stop UI update timer
