@@ -739,10 +739,11 @@ class DeviceEmulatorClient(QMainWindow):
         refresh_btn.clicked.connect(self.refresh_analysis_table)
         button_layout.addWidget(refresh_btn)
         
-        calculate_stats_btn = QPushButton("Calculate Statistics")
-        calculate_stats_btn.clicked.connect(self.calculate_statistics)
+        calculate_stats_btn = QPushButton("Calculate Analytics")
+        calculate_stats_btn.clicked.connect(self.calculate_and_store_analytics)
         calculate_stats_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 5px;")
         button_layout.addWidget(calculate_stats_btn)
+        
         
         export_csv_btn = QPushButton("Export to CSV")
         export_csv_btn.clicked.connect(self.export_selected_series_to_csv)
@@ -754,7 +755,7 @@ class DeviceEmulatorClient(QMainWindow):
         
         layout.addWidget(table_group)
         
-        self.tab_widget.addTab(tab, "Data Analysis")
+        self.tab_widget.addTab(tab, "Data Analytics")
         
     def create_device_data_panel(self, parent):
         """Create the device data table panel"""
@@ -1549,24 +1550,43 @@ class DeviceEmulatorClient(QMainWindow):
                         self.analysis_data_table.setCellWidget(row, 5, checkbox)
                         
                         # Statistics columns (Min, Max, Mean, Std Dev)
-                        # Get statistics if they exist
-                        stats = self.analysis_statistics.get(series_key, {})
-                        
-                        # Min
-                        min_value = stats.get('min', '')
-                        self.analysis_data_table.setItem(row, 6, QTableWidgetItem(str(min_value) if min_value != '' else ''))
-                        
-                        # Max
-                        max_value = stats.get('max', '')
-                        self.analysis_data_table.setItem(row, 7, QTableWidgetItem(str(max_value) if max_value != '' else ''))
-                        
-                        # Mean
-                        mean_value = stats.get('mean', '')
-                        self.analysis_data_table.setItem(row, 8, QTableWidgetItem(str(mean_value) if mean_value != '' else ''))
-                        
-                        # Std Dev
-                        std_dev_value = stats.get('std_dev', '')
-                        self.analysis_data_table.setItem(row, 9, QTableWidgetItem(str(std_dev_value) if std_dev_value != '' else ''))
+                        # Only show statistics if the series is selected
+                        if series_key in self.selected_analysis_series:
+                            # Get statistics from stored analytics in DataManager
+                            stream = self.data_manager.get_data_stream(device_id, data_type)
+                            if stream and stream.analytics:
+                                # Extract statistics from stored analytics
+                                min_max_all = stream.analytics.get('min_max_all', {})
+                                average_all = stream.analytics.get('average_all')
+                                std_dev_all = stream.analytics.get('std_dev_all')
+                                
+                                # Min
+                                min_value = round(min_max_all.get('min', 0), 4) if min_max_all and 'min' in min_max_all else ''
+                                self.analysis_data_table.setItem(row, 6, QTableWidgetItem(str(min_value) if min_value != '' else ''))
+                                
+                                # Max
+                                max_value = round(min_max_all.get('max', 0), 4) if min_max_all and 'max' in min_max_all else ''
+                                self.analysis_data_table.setItem(row, 7, QTableWidgetItem(str(max_value) if max_value != '' else ''))
+                                
+                                # Mean
+                                mean_value = round(average_all, 4) if average_all is not None else ''
+                                self.analysis_data_table.setItem(row, 8, QTableWidgetItem(str(mean_value) if mean_value != '' else ''))
+                                
+                                # Std Dev
+                                std_dev_value = round(std_dev_all, 4) if std_dev_all is not None else ''
+                                self.analysis_data_table.setItem(row, 9, QTableWidgetItem(str(std_dev_value) if std_dev_value != '' else ''))
+                            else:
+                                # No stored analytics available - show empty
+                                self.analysis_data_table.setItem(row, 6, QTableWidgetItem(''))
+                                self.analysis_data_table.setItem(row, 7, QTableWidgetItem(''))
+                                self.analysis_data_table.setItem(row, 8, QTableWidgetItem(''))
+                                self.analysis_data_table.setItem(row, 9, QTableWidgetItem(''))
+                        else:
+                            # Clear statistics columns for unselected series
+                            self.analysis_data_table.setItem(row, 6, QTableWidgetItem(''))
+                            self.analysis_data_table.setItem(row, 7, QTableWidgetItem(''))
+                            self.analysis_data_table.setItem(row, 8, QTableWidgetItem(''))
+                            self.analysis_data_table.setItem(row, 9, QTableWidgetItem(''))
                         
                         row += 1
                     else:
@@ -1584,12 +1604,52 @@ class DeviceEmulatorClient(QMainWindow):
         try:
             self.logger.debug(f"Analysis series selection changed - {series_key}, state: {state}")
             
+            parts = series_key.split('#', 1)
+            if len(parts) != 2:
+                self.logger.error(f"Invalid series_key format: {series_key}")
+                return
+            
+            device_id, data_type = parts
+            
             if state == Qt.CheckState.Checked.value:
                 self.selected_analysis_series.add(series_key)
                 self.logger.debug(f"Added {series_key} to selected_analysis_series")
+                
+                # Get stored analytics from DataManager and update statistics
+                if self.data_manager:
+                    stream = self.data_manager.get_data_stream(device_id, data_type)
+                    if stream and stream.analytics:
+                        # Extract statistics from stored analytics
+                        min_max_all = stream.analytics.get('min_max_all', {})
+                        average_all = stream.analytics.get('average_all')
+                        std_dev_all = stream.analytics.get('std_dev_all')
+                        
+                        # Store statistics
+                        self.analysis_statistics[series_key] = {
+                            'min': round(min_max_all.get('min', 0), 4) if min_max_all and 'min' in min_max_all else '',
+                            'max': round(min_max_all.get('max', 0), 4) if min_max_all and 'max' in min_max_all else '',
+                            'mean': round(average_all, 4) if average_all is not None else '',
+                            'std_dev': round(std_dev_all, 4) if std_dev_all is not None else ''
+                        }
+                        self.logger.debug(f"Loaded statistics from stored analytics for {series_key}")
+                    else:
+                        # No stored analytics available
+                        self.analysis_statistics[series_key] = {
+                            'min': '',
+                            'max': '',
+                            'mean': '',
+                            'std_dev': ''
+                        }
+                        self.logger.warning(f"No stored analytics available for {device_id}.{data_type}")
             else:
                 self.selected_analysis_series.discard(series_key)
                 self.logger.debug(f"Removed {series_key} from selected_analysis_series")
+                # Clear statistics for unselected series
+                if series_key in self.analysis_statistics:
+                    del self.analysis_statistics[series_key]
+            
+            # Refresh the table to show/hide statistics based on selection
+            self.update_analysis_data_table()
                 
         except Exception as e:
             self.logger.error(f"Error in on_analysis_series_selection_changed: {e}")
