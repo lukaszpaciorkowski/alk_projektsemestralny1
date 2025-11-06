@@ -47,6 +47,8 @@ class DataStream:
     data_type: str
     data_points: deque = field(default_factory=lambda: deque(maxlen=10000))  # Keep last 1000 points
     last_update: Optional[datetime] = None
+    analytics: Optional[Dict[str, Any]] = None  # Stored analytics with timestamp
+    analytics_timestamp: Optional[datetime] = None  # When analytics were calculated
     
     def add_data_point(self, data_point: DataPoint):
         """Add a new data point to the stream"""
@@ -432,6 +434,27 @@ class DataManager:
         if stream:
             analytics = self._calculate_analytics(stream)
             return analytics
+        return None
+    
+    def calculate_and_store_analytics(self, device_id: str, data_type: str) -> Optional[Dict[str, Any]]:
+        """Calculate analytics for a stream and store them with timestamp"""
+        stream = self.get_data_stream(device_id, data_type)
+        if stream:
+            analytics = self._calculate_analytics(stream)
+            # Add calculation timestamp to analytics
+            analytics['calculation_timestamp'] = datetime.now().isoformat()
+            # Store in stream
+            stream.analytics = analytics
+            stream.analytics_timestamp = datetime.now()
+            self.logger.info(f"Stored analytics for {device_id}.{data_type} at {stream.analytics_timestamp}")
+            return analytics
+        return None
+    
+    def get_stored_analytics(self, device_id: str, data_type: str) -> Optional[Dict[str, Any]]:
+        """Get stored analytics for a stream"""
+        stream = self.get_data_stream(device_id, data_type)
+        if stream and stream.analytics:
+            return stream.analytics
         return None
     
     def get_all_analytics(self) -> Dict[str, Dict[str, Dict[str, Any]]]:

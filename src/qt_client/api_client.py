@@ -118,9 +118,12 @@ class HistoricalDataChart(QChartView):
         
         # Store series for updates
         self.series_dict = {}
+        
+        # Store analytics data for each series
+        self.analytics_dict = {}  # series_key -> {analytics, stream}
     
     def paintEvent(self, event):
-        """Custom paint event for fallback mode"""
+        """Custom paint event for fallback mode and analytics drawing"""
         super().paintEvent(event)
         if not CHARTS_AVAILABLE:
             from PyQt6.QtGui import QPainter, QFont
@@ -128,6 +131,17 @@ class HistoricalDataChart(QChartView):
             painter.setFont(QFont("Arial", 12))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, 
                            "QtCharts not available.\nInstall PyQt6-Charts for chart functionality.")
+            return
+        
+        # Draw analytics overlays
+        if self.analytics_dict:
+            from PyQt6.QtGui import QPainter
+            viewport = self.viewport()
+            if viewport:
+                painter = QPainter(viewport)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                self._draw_analytics(painter)
+                painter.end()
         
     def add_data_series(self, device_id: str, data_type: str, data_points: List[DataPoint], color: QColor = None):
         """Add or update a data series"""
@@ -346,6 +360,150 @@ class HistoricalDataChart(QChartView):
                     padding = abs(max_value) * 0.1 if max_value != 0 else 1.0
                 value_axis.setRange(min_value - padding, max_value + padding)
                 self.logger.debug(f"Updated axis for unit '{unit}': {min_value - padding:.2f} to {max_value + padding:.2f}")
+    
+    def set_analytics(self, device_id: str, data_type: str, analytics: Dict[str, Any], stream):
+        """Set analytics data for a series"""
+        series_key = f"{device_id}#{data_type}"
+        self.analytics_dict[series_key] = {
+            'analytics': analytics,
+            'stream': stream
+        }
+        self.update()
+        self.repaint()  # Force immediate repaint
+    
+    def remove_analytics(self, device_id: str, data_type: str):
+        """Remove analytics data for a series"""
+        series_key = f"{device_id}#{data_type}"
+        if series_key in self.analytics_dict:
+            del self.analytics_dict[series_key]
+        self.update()
+        self.repaint()  # Force immediate repaint
+    
+    def _draw_analytics(self, painter):
+        """Draw analytics overlays on the chart"""
+        if not CHARTS_AVAILABLE:
+            return
+        
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QPen, QBrush
+        
+        plot_area = self.chart.plotArea()
+        if plot_area.isEmpty():
+            return
+        
+        for series_key, analytics_data in self.analytics_dict.items():
+            if series_key not in self.series_dict:
+                continue
+            
+            series = self.series_dict[series_key]
+            analytics = analytics_data['analytics']
+            stream = analytics_data['stream']
+            
+            # Get the value axis for this series
+            attached_axes = series.attachedAxes()
+            value_axis = None
+            for axis in attached_axes:
+                if isinstance(axis, QValueAxis):
+                    value_axis = axis
+                    break
+            
+            if not value_axis:
+                continue
+            
+            # Get axis ranges
+            value_min = value_axis.min()
+            value_max = value_axis.max()
+            time_min = self.time_axis.min().toMSecsSinceEpoch()
+            time_max = self.time_axis.max().toMSecsSinceEpoch()
+            
+            # Get min, max, average from analytics
+            min_max_all = analytics.get('min_max_all')
+            average_all = analytics.get('average_all')
+            std_dev_all = analytics.get('std_dev_all')
+            
+            if min_max_all and 'min' in min_max_all and 'max' in min_max_all:
+                min_val = min_max_all['min']
+                max_val = min_max_all['max']
+                
+                # Draw min line (bold horizontal)
+                if min_val >= value_min and min_val <= value_max:
+                    y_pos = self._value_to_y(min_val, value_min, value_max, plot_area)
+                    pen = QPen(QColor(255, 0, 0), 3)  # Red, bold
+                    painter.setPen(pen)
+                    painter.drawLine(int(plot_area.left()), int(y_pos), int(plot_area.right()), int(y_pos))
+                
+                # Draw max line (bold horizontal)
+                if max_val >= value_min and max_val <= value_max:
+                    y_pos = self._value_to_y(max_val, value_min, value_max, plot_area)
+                    pen = QPen(QColor(0, 0, 255), 3)  # Blue, bold
+                    painter.setPen(pen)
+                    painter.drawLine(int(plot_area.left()), int(y_pos), int(plot_area.right()), int(y_pos))
+            
+            # Draw average line (bold horizontal)
+            if average_all is not None and average_all >= value_min and average_all <= value_max:
+                y_pos = self._value_to_y(average_all, value_min, value_max, plot_area)
+                pen = QPen(QColor(0, 255, 0), 3)  # Green, bold
+                painter.setPen(pen)
+                painter.drawLine(int(plot_area.left()), int(y_pos), int(plot_area.right()), int(y_pos))
+            
+            # Draw standard deviation range (mean ± std dev)
+            if average_all is not None and std_dev_all is not None:
+                mean_plus_std = average_all + std_dev_all
+                mean_minus_std = average_all - std_dev_all
+                
+                if mean_plus_std >= value_min and mean_minus_std <= value_max:
+                    y_plus = self._value_to_y(mean_plus_std, value_min, value_max, plot_area)
+                    y_minus = self._value_to_y(mean_minus_std, value_min, value_max, plot_area)
+                    
+                    # Draw shaded area
+                    rect = QRect(
+                        int(plot_area.left()),
+                        int(min(y_plus, y_minus)),
+                        int(plot_area.width()),
+                        int(abs(y_plus - y_minus))
+                    )
+                    brush = QBrush(QColor(255, 255, 0, 100))  # Yellow, semi-transparent
+                    painter.fillRect(rect, brush)
+                    
+                    # Draw lines for std dev range
+                    pen = QPen(QColor(255, 255, 0), 2)  # Yellow
+                    painter.setPen(pen)
+                    painter.drawLine(int(plot_area.left()), int(y_plus), int(plot_area.right()), int(y_plus))
+                    painter.drawLine(int(plot_area.left()), int(y_minus), int(plot_area.right()), int(y_minus))
+            
+            # Draw anomalies as points
+            from data_manager import DataAnalytics
+            anomalies = DataAnalytics.detect_anomalies(stream, threshold=2.0)
+            
+            if anomalies:
+                pen = QPen(QColor(255, 0, 255), 1)  # Magenta
+                brush = QBrush(QColor(255, 0, 255))  # Magenta
+                painter.setPen(pen)
+                painter.setBrush(brush)
+                
+                for anomaly in anomalies:
+                    if isinstance(anomaly.value, (int, float)) and anomaly.value >= value_min and anomaly.value <= value_max:
+                        x_pos = self._time_to_x(anomaly.timestamp, time_min, time_max, plot_area)
+                        y_pos = self._value_to_y(anomaly.value, value_min, value_max, plot_area)
+                        
+                        # Draw circle with radius at least 5px
+                        radius = 6
+                        painter.drawEllipse(int(x_pos - radius), int(y_pos - radius), radius * 2, radius * 2)
+    
+    def _value_to_y(self, value: float, value_min: float, value_max: float, plot_area) -> float:
+        """Convert a value to y coordinate in plot area"""
+        if value_max == value_min:
+            return plot_area.center().y()
+        ratio = (value - value_min) / (value_max - value_min)
+        return plot_area.bottom() - ratio * plot_area.height()
+    
+    def _time_to_x(self, timestamp: datetime, time_min: float, time_max: float, plot_area) -> float:
+        """Convert a timestamp to x coordinate in plot area"""
+        timestamp_ms = int(timestamp.timestamp() * 1000)
+        if time_max == time_min:
+            return plot_area.center().x()
+        ratio = (timestamp_ms - time_min) / (time_max - time_min)
+        return plot_area.left() + ratio * plot_area.width()
 
 
 class DeviceEmulatorClient(QMainWindow):
@@ -359,6 +517,7 @@ class DeviceEmulatorClient(QMainWindow):
         self.historical_chart = None
         self.device_data_table = None
         self.selected_series = set()  # Track selected data series for chart
+        self.analytics_enabled_series = set()  # Track series with analytics enabled
         self.analysis_data_table = None  # Table for data analysis tab
         self.selected_analysis_series = set()  # Track selected series for analysis
         self.analysis_statistics = {}  # Store calculated statistics: series_key -> {min, max, mean, std_dev}
@@ -608,9 +767,9 @@ class DeviceEmulatorClient(QMainWindow):
         
         # Create device data table
         self.device_data_table = QTableWidget()
-        self.device_data_table.setColumnCount(6)
+        self.device_data_table.setColumnCount(7)
         self.device_data_table.setHorizontalHeaderLabels([
-            "Device ID", "Data Type", "Latest Value", "Unit", "Number of Points", "Select"
+            "Device ID", "Data Type", "Latest Value", "Unit", "Number of Points", "Select", "Analytics"
         ])
         self.device_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.device_data_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -672,6 +831,11 @@ class DeviceEmulatorClient(QMainWindow):
         clear_chart_btn = QPushButton("Clear Chart")
         clear_chart_btn.clicked.connect(self.clear_chart)
         controls_layout.addWidget(clear_chart_btn)
+        
+        calculate_analytics_btn = QPushButton("Calculate Analytics")
+        calculate_analytics_btn.clicked.connect(self.calculate_and_store_analytics)
+        calculate_analytics_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 5px;")
+        controls_layout.addWidget(calculate_analytics_btn)
         
         auto_refresh_checkbox = QCheckBox("Auto Refresh")
         auto_refresh_checkbox.setChecked(True)
@@ -1042,6 +1206,22 @@ class DeviceEmulatorClient(QMainWindow):
                         checkbox.stateChanged.connect(lambda state, key=series_key: self.on_series_selection_changed(key, state))
                         self.device_data_table.setCellWidget(row, 5, checkbox)
                         
+                        # Analytics checkbox
+                        analytics_checkbox = QCheckBox()
+                        analytics_checkbox.setStyleSheet("""
+                            QCheckBox::indicator:checked {
+                                background-color: orange;
+                                border: 1px solid black;
+                            }
+                            QCheckBox::indicator:unchecked {
+                                background-color: white;
+                                border: 1px solid black;
+                            }
+                        """)
+                        analytics_checkbox.setChecked(series_key in self.analytics_enabled_series)
+                        analytics_checkbox.stateChanged.connect(lambda state, key=series_key: self.on_analytics_selection_changed(key, state))
+                        self.device_data_table.setCellWidget(row, 6, analytics_checkbox)
+                        
                         row += 1
                     else:
                         self.logger.warning(f"No latest data point for {device_id} - {data_type}")
@@ -1111,6 +1291,44 @@ class DeviceEmulatorClient(QMainWindow):
                     self.logger.error(f"Invalid series_key format: {series_key}")
         except Exception as e:
             self.logger.error(f"Error in on_series_selection_changed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def on_analytics_selection_changed(self, series_key: str, state: int):
+        """Handle analytics checkbox selection change"""
+        try:
+            self.logger.debug(f"Analytics selection changed - {series_key}, state: {state}")
+            
+            parts = series_key.split('#', 1)
+            if len(parts) != 2:
+                self.logger.error(f"Invalid series_key format: {series_key}")
+                return
+            
+            device_id, data_type = parts
+            
+            if state == Qt.CheckState.Checked.value:
+                self.analytics_enabled_series.add(series_key)
+                self.logger.debug(f"Added {series_key} to analytics_enabled_series")
+                
+                # Get analytics data and update chart
+                if self.data_manager:
+                    stream = self.data_manager.get_data_stream(device_id, data_type)
+                    if stream and stream.analytics:
+                        self.historical_chart.set_analytics(device_id, data_type, stream.analytics, stream)
+                    else:
+                        self.logger.warning(f"No analytics available for {device_id}.{data_type}. Calculate analytics first.")
+                        self.statusBar().showMessage(f"No analytics available for {device_id}.{data_type}. Calculate analytics first.", 3000)
+            else:
+                self.analytics_enabled_series.discard(series_key)
+                self.logger.debug(f"Removed {series_key} from analytics_enabled_series")
+                self.historical_chart.remove_analytics(device_id, data_type)
+            
+            # Refresh chart to show/hide analytics immediately
+            self.historical_chart.update()
+            self.historical_chart.repaint()  # Force immediate repaint
+                
+        except Exception as e:
+            self.logger.error(f"Error in on_analytics_selection_changed: {e}")
             import traceback
             traceback.print_exc()
     
@@ -1196,6 +1414,72 @@ class DeviceEmulatorClient(QMainWindow):
     def refresh_device_data(self):
         """Refresh the device data table"""
         self.update_device_data_table()
+    
+    def calculate_and_store_analytics(self):
+        """Calculate analytics for all data series and store them with timestamps"""
+        try:
+            if not self.data_manager:
+                QMessageBox.warning(self, "No Data", "No data manager available. Please connect to the server or load CSV data first.")
+                return
+            
+            # Get all data streams
+            all_streams = self.data_manager.get_all_data_streams()
+            
+            if not all_streams:
+                QMessageBox.warning(self, "No Data", "No data streams available. Please fetch data first.")
+                return
+            
+            self.logger.info(f"Calculating and storing analytics for all data series")
+            
+            calculated_count = 0
+            failed_count = 0
+            
+            # Calculate analytics for all data series
+            for device_id, device_streams in all_streams.items():
+                for data_type, stream in device_streams.items():
+                    try:
+                        analytics = self.data_manager.calculate_and_store_analytics(device_id, data_type)
+                        
+                        if analytics:
+                            calculated_count += 1
+                            analytics_timestamp = analytics.get('calculation_timestamp', 'Unknown')
+                            self.logger.debug(f"Stored analytics for {device_id}.{data_type} at {analytics_timestamp}")
+                        else:
+                            failed_count += 1
+                            self.logger.warning(f"Failed to calculate analytics for {device_id}.{data_type}")
+                    except Exception as e:
+                        failed_count += 1
+                        self.logger.error(f"Error calculating analytics for {device_id}.{data_type}: {e}")
+                        continue
+            
+            # Show success message
+            message = f"Analytics calculated and stored for {calculated_count} data series(s)."
+            if failed_count > 0:
+                message += f"\n{failed_count} series(s) failed."
+            
+            QMessageBox.information(
+                self,
+                "Analytics Calculated",
+                message
+            )
+            
+            # Refresh the device data table to show updated information
+            self.update_device_data_table()
+            
+            # Update analytics on chart if enabled
+            for series_key in self.analytics_enabled_series:
+                parts = series_key.split('#', 1)
+                if len(parts) == 2:
+                    device_id, data_type = parts
+                    stream = self.data_manager.get_data_stream(device_id, data_type)
+                    if stream and stream.analytics:
+                        self.historical_chart.set_analytics(device_id, data_type, stream.analytics, stream)
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating analytics: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error calculating analytics: {str(e)}")
     
     def refresh_analysis_table(self):
         """Refresh the analysis data table"""
