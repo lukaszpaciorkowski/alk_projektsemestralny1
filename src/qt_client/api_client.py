@@ -8,7 +8,9 @@ import json
 import csv
 import logging
 import argparse
+import statistics
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QLineEdit, QPushButton, 
@@ -101,6 +103,8 @@ class HistoricalDataChart(QChartView):
             self.time_axis = QDateTimeAxis()
             self.time_axis.setFormat("hh:mm:ss")
             self.time_axis.setTitleText("Time")
+            self.time_axis.setLabelsVisible(True)
+            self.time_axis.setGridLineVisible(True)
             self.chart.addAxis(self.time_axis, Qt.AlignmentFlag.AlignBottom)
             
             # Store value axes for each unit
@@ -313,6 +317,12 @@ class HistoricalDataChart(QChartView):
             min_qdatetime = QDateTime.fromMSecsSinceEpoch(int(min_time))
             max_qdatetime = QDateTime.fromMSecsSinceEpoch(int(max_time))
             self.time_axis.setRange(min_qdatetime, max_qdatetime)
+            self.logger.debug(f"Updated time axis range: {min_qdatetime.toString()} to {max_qdatetime.toString()}")
+        else:
+            # Set a default range if no data is available
+            from PyQt6.QtCore import QDateTime
+            now = QDateTime.currentDateTime()
+            self.time_axis.setRange(now.addSecs(-3600), now)  # Last hour as default
         
         # Update each value axis based on its associated series
         for unit, value_axis in self.value_axes.items():
@@ -349,6 +359,9 @@ class DeviceEmulatorClient(QMainWindow):
         self.historical_chart = None
         self.device_data_table = None
         self.selected_series = set()  # Track selected data series for chart
+        self.analysis_data_table = None  # Table for data analysis tab
+        self.selected_analysis_series = set()  # Track selected series for analysis
+        self.analysis_statistics = {}  # Store calculated statistics: series_key -> {min, max, mean, std_dev}
         
         # Timer for periodic UI updates from DataManager
         self.ui_update_timer = QTimer()
@@ -381,6 +394,9 @@ class DeviceEmulatorClient(QMainWindow):
         
         # Create Data Visualization tab
         self.create_visualization_tab()
+        
+        # Create Data Analysis tab
+        self.create_data_analysis_tab()
         
         # Create status bar
         self.statusBar().showMessage("Ready")
@@ -535,6 +551,51 @@ class DeviceEmulatorClient(QMainWindow):
         splitter.setSizes([400, 1000])
         
         self.tab_widget.addTab(tab, "Data Visualization")
+    
+    def create_data_analysis_tab(self):
+        """Create the Data Analysis tab"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # Data series table group
+        table_group = QGroupBox("Data Series")
+        table_layout = QVBoxLayout(table_group)
+        
+        # Create analysis data table with additional columns for statistics
+        self.analysis_data_table = QTableWidget()
+        self.analysis_data_table.setColumnCount(10)
+        self.analysis_data_table.setHorizontalHeaderLabels([
+            "Device ID", "Data Type", "Latest Value", "Unit", "Number of Points", 
+            "Select", "Min", "Max", "Mean", "Std Dev"
+        ])
+        self.analysis_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.analysis_data_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        
+        table_layout.addWidget(self.analysis_data_table)
+        
+        # Add control buttons
+        button_layout = QHBoxLayout()
+        
+        refresh_btn = QPushButton("Refresh Data")
+        refresh_btn.clicked.connect(self.refresh_analysis_table)
+        button_layout.addWidget(refresh_btn)
+        
+        calculate_stats_btn = QPushButton("Calculate Statistics")
+        calculate_stats_btn.clicked.connect(self.calculate_statistics)
+        calculate_stats_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 5px;")
+        button_layout.addWidget(calculate_stats_btn)
+        
+        export_csv_btn = QPushButton("Export to CSV")
+        export_csv_btn.clicked.connect(self.export_selected_series_to_csv)
+        export_csv_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
+        button_layout.addWidget(export_csv_btn)
+        
+        button_layout.addStretch()
+        table_layout.addLayout(button_layout)
+        
+        layout.addWidget(table_group)
+        
+        self.tab_widget.addTab(tab, "Data Analysis")
         
     def create_device_data_panel(self, parent):
         """Create the device data table panel"""
@@ -549,7 +610,7 @@ class DeviceEmulatorClient(QMainWindow):
         self.device_data_table = QTableWidget()
         self.device_data_table.setColumnCount(6)
         self.device_data_table.setHorizontalHeaderLabels([
-            "Device ID", "Data Type", "Latest Value", "Unit", "Timestamp", "Select"
+            "Device ID", "Data Type", "Latest Value", "Unit", "Number of Points", "Select"
         ])
         self.device_data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.device_data_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -894,6 +955,10 @@ class DeviceEmulatorClient(QMainWindow):
             self.update_data_table_from_manager()
             self.update_device_data_table()
             
+            # Update analysis table if it exists
+            if self.analysis_data_table:
+                self.update_analysis_data_table()
+            
             # Update chart for selected series
             for series_key in self.selected_series:
                 parts = series_key.split('#', 1)
@@ -956,9 +1021,9 @@ class DeviceEmulatorClient(QMainWindow):
                         # Unit
                         self.device_data_table.setItem(row, 3, QTableWidgetItem(latest_point.unit))
                         
-                        # Timestamp
-                        timestamp_str = latest_point.timestamp.strftime("%H:%M:%S")
-                        self.device_data_table.setItem(row, 4, QTableWidgetItem(timestamp_str))
+                        # Number of Points
+                        num_points = len(stream.data_points)
+                        self.device_data_table.setItem(row, 4, QTableWidgetItem(str(num_points)))
                         
                         # Select checkbox
                         checkbox = QCheckBox()
@@ -1131,6 +1196,327 @@ class DeviceEmulatorClient(QMainWindow):
     def refresh_device_data(self):
         """Refresh the device data table"""
         self.update_device_data_table()
+    
+    def refresh_analysis_table(self):
+        """Refresh the analysis data table"""
+        self.update_analysis_data_table()
+    
+    def update_analysis_data_table(self):
+        """Update the analysis data table"""
+        try:
+            self.logger.debug("update_analysis_data_table called")
+            
+            if not self.data_manager:
+                self.logger.error("data_manager is None")
+                return
+                
+            if not self.analysis_data_table:
+                self.logger.error("analysis_data_table is None")
+                return
+            
+            # Get all data streams
+            all_streams = self.data_manager.get_all_data_streams()
+            self.logger.debug(f"Found {len(all_streams)} devices with data streams")
+            
+            # Count total rows needed
+            total_rows = sum(len(device_streams) for device_streams in all_streams.values())
+            self.logger.debug(f"Setting analysis table to {total_rows} rows")
+            self.analysis_data_table.setRowCount(total_rows)
+            
+            row = 0
+            for device_id, device_streams in all_streams.items():
+                self.logger.debug(f"Processing device {device_id} with {len(device_streams)} data types")
+                for data_type, stream in device_streams.items():
+                    latest_point = stream.get_latest_data_point()
+                    
+                    if latest_point:
+                        series_key = f"{device_id}#{data_type}"
+                        
+                        # Device ID
+                        self.analysis_data_table.setItem(row, 0, QTableWidgetItem(device_id))
+                        
+                        # Data Type
+                        self.analysis_data_table.setItem(row, 1, QTableWidgetItem(data_type))
+                        
+                        # Latest Value
+                        self.analysis_data_table.setItem(row, 2, QTableWidgetItem(str(latest_point.value)))
+                        
+                        # Unit
+                        self.analysis_data_table.setItem(row, 3, QTableWidgetItem(latest_point.unit))
+                        
+                        # Number of Points
+                        num_points = len(stream.data_points)
+                        self.analysis_data_table.setItem(row, 4, QTableWidgetItem(str(num_points)))
+                        
+                        # Select checkbox
+                        checkbox = QCheckBox()
+                        checkbox.setStyleSheet("""
+                            QCheckBox::indicator:checked {
+                                background-color: #2196F3;
+                                border: 1px solid black;
+                            }
+                            QCheckBox::indicator:unchecked {
+                                background-color: white;
+                                border: 1px solid black;
+                            }
+                        """)
+                        checkbox.setChecked(series_key in self.selected_analysis_series)
+                        checkbox.stateChanged.connect(lambda state, key=series_key: self.on_analysis_series_selection_changed(key, state))
+                        self.analysis_data_table.setCellWidget(row, 5, checkbox)
+                        
+                        # Statistics columns (Min, Max, Mean, Std Dev)
+                        # Get statistics if they exist
+                        stats = self.analysis_statistics.get(series_key, {})
+                        
+                        # Min
+                        min_value = stats.get('min', '')
+                        self.analysis_data_table.setItem(row, 6, QTableWidgetItem(str(min_value) if min_value != '' else ''))
+                        
+                        # Max
+                        max_value = stats.get('max', '')
+                        self.analysis_data_table.setItem(row, 7, QTableWidgetItem(str(max_value) if max_value != '' else ''))
+                        
+                        # Mean
+                        mean_value = stats.get('mean', '')
+                        self.analysis_data_table.setItem(row, 8, QTableWidgetItem(str(mean_value) if mean_value != '' else ''))
+                        
+                        # Std Dev
+                        std_dev_value = stats.get('std_dev', '')
+                        self.analysis_data_table.setItem(row, 9, QTableWidgetItem(str(std_dev_value) if std_dev_value != '' else ''))
+                        
+                        row += 1
+                    else:
+                        self.logger.warning(f"No latest data point for {device_id} - {data_type}")
+            
+            self.logger.debug(f"Analysis data table updated with {row} rows")
+            
+        except Exception as e:
+            self.logger.error(f"Error in update_analysis_data_table: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def on_analysis_series_selection_changed(self, series_key, state):
+        """Handle checkbox selection change for analysis data series"""
+        try:
+            self.logger.debug(f"Analysis series selection changed - {series_key}, state: {state}")
+            
+            if state == Qt.CheckState.Checked.value:
+                self.selected_analysis_series.add(series_key)
+                self.logger.debug(f"Added {series_key} to selected_analysis_series")
+            else:
+                self.selected_analysis_series.discard(series_key)
+                self.logger.debug(f"Removed {series_key} from selected_analysis_series")
+                
+        except Exception as e:
+            self.logger.error(f"Error in on_analysis_series_selection_changed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def calculate_statistics(self):
+        """Calculate statistics (min, max, mean, std dev) for selected data series"""
+        try:
+            if not self.data_manager:
+                QMessageBox.warning(self, "No Data", "No data manager available. Please connect to the server or load CSV data first.")
+                return
+            
+            if not self.selected_analysis_series:
+                QMessageBox.warning(self, "No Selection", "Please select at least one data series to calculate statistics.")
+                return
+            
+            self.logger.info(f"Calculating statistics for {len(self.selected_analysis_series)} selected series")
+            
+            # Calculate statistics for each selected series
+            for series_key in self.selected_analysis_series:
+                parts = series_key.split('#', 1)
+                if len(parts) != 2:
+                    self.logger.warning(f"Invalid series_key format: {series_key}")
+                    continue
+                
+                device_id, data_type = parts
+                stream = self.data_manager.get_data_stream(device_id, data_type)
+                
+                if not stream:
+                    self.logger.warning(f"Stream not found for {device_id} - {data_type}")
+                    continue
+                
+                # Get all numeric values from the stream
+                values = []
+                for point in stream.data_points:
+                    if isinstance(point.value, (int, float)):
+                        values.append(float(point.value))
+                
+                if not values:
+                    self.logger.warning(f"No numeric values found for {device_id} - {data_type}")
+                    self.analysis_statistics[series_key] = {
+                        'min': '',
+                        'max': '',
+                        'mean': '',
+                        'std_dev': ''
+                    }
+                    continue
+                
+                # Calculate statistics
+                min_val = min(values)
+                max_val = max(values)
+                mean_val = statistics.mean(values)
+                
+                # Calculate standard deviation (handle case with only one value)
+                if len(values) > 1:
+                    std_dev_val = statistics.stdev(values)
+                else:
+                    std_dev_val = 0.0
+                
+                # Store statistics
+                self.analysis_statistics[series_key] = {
+                    'min': round(min_val, 4),
+                    'max': round(max_val, 4),
+                    'mean': round(mean_val, 4),
+                    'std_dev': round(std_dev_val, 4)
+                }
+                
+                self.logger.debug(f"Statistics for {series_key}: min={min_val}, max={max_val}, mean={mean_val}, std_dev={std_dev_val}")
+            
+            # Refresh the table to show calculated statistics
+            self.update_analysis_data_table()
+            
+            # Show success message
+            QMessageBox.information(
+                self,
+                "Statistics Calculated",
+                f"Successfully calculated statistics for {len(self.selected_analysis_series)} data series(s)."
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating statistics: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Error calculating statistics: {str(e)}")
+    
+    def export_selected_series_to_csv(self):
+        """Export selected data series from the analysis table to CSV file"""
+        try:
+            if not self.analysis_data_table:
+                QMessageBox.warning(self, "No Table", "Analysis table is not available.")
+                return
+            
+            if not self.selected_analysis_series:
+                QMessageBox.warning(self, "No Selection", "Please select at least one data series to export.")
+                return
+            
+            # Open file dialog to select save location
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Selected Data Series to CSV",
+                "",
+                "CSV Files (*.csv);;All Files (*)"
+            )
+            
+            if not file_path:
+                return  # User cancelled
+            
+            # Ensure .csv extension
+            if not file_path.lower().endswith('.csv'):
+                file_path += '.csv'
+            
+            self.logger.info(f"Exporting {len(self.selected_analysis_series)} selected series to {file_path}")
+            
+            # Collect table data for selected series
+            table_rows = []
+            
+            # Get all rows from the table
+            for row in range(self.analysis_data_table.rowCount()):
+                # Get the checkbox to check if this series is selected
+                checkbox = self.analysis_data_table.cellWidget(row, 5)  # Select column is at index 5
+                if not checkbox or not checkbox.isChecked():
+                    continue  # Skip unselected rows
+                
+                # Extract data from table columns
+                device_id_item = self.analysis_data_table.item(row, 0)  # Device ID
+                data_type_item = self.analysis_data_table.item(row, 1)  # Data Type
+                latest_value_item = self.analysis_data_table.item(row, 2)  # Latest Value
+                unit_item = self.analysis_data_table.item(row, 3)  # Unit
+                num_points_item = self.analysis_data_table.item(row, 4)  # Number of Points
+                min_item = self.analysis_data_table.item(row, 6)  # Min
+                max_item = self.analysis_data_table.item(row, 7)  # Max
+                mean_item = self.analysis_data_table.item(row, 8)  # Mean
+                std_dev_item = self.analysis_data_table.item(row, 9)  # Std Dev
+                
+                # Get text values (handle None items)
+                device_id = device_id_item.text() if device_id_item else ""
+                data_type = data_type_item.text() if data_type_item else ""
+                latest_value = latest_value_item.text() if latest_value_item else ""
+                unit = unit_item.text() if unit_item else ""
+                num_points = num_points_item.text() if num_points_item else ""
+                min_val = min_item.text() if min_item else ""
+                max_val = max_item.text() if max_item else ""
+                mean_val = mean_item.text() if mean_item else ""
+                std_dev_val = std_dev_item.text() if std_dev_item else ""
+                
+                # Add row data
+                table_rows.append({
+                    'device_id': device_id,
+                    'data_type': data_type,
+                    'latest_value': latest_value,
+                    'unit': unit,
+                    'number_of_points': num_points,
+                    'min': min_val,
+                    'max': max_val,
+                    'mean': mean_val,
+                    'std_dev': std_dev_val
+                })
+            
+            if not table_rows:
+                QMessageBox.warning(self, "No Data", "No selected rows found in the table.")
+                return
+            
+            # Write to CSV file
+            csv_path = Path(file_path)
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                
+                # Write header (matching table columns, excluding "Select")
+                writer.writerow([
+                    'Device ID', 
+                    'Data Type', 
+                    'Latest Value', 
+                    'Unit', 
+                    'Number of Points', 
+                    'Min', 
+                    'Max', 
+                    'Mean', 
+                    'Std Dev'
+                ])
+                
+                # Write data rows
+                for row_data in table_rows:
+                    writer.writerow([
+                        row_data['device_id'],
+                        row_data['data_type'],
+                        row_data['latest_value'],
+                        row_data['unit'],
+                        row_data['number_of_points'],
+                        row_data['min'],
+                        row_data['max'],
+                        row_data['mean'],
+                        row_data['std_dev']
+                    ])
+            
+            # Show success message
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Successfully exported {len(table_rows)} data series to:\n{file_path}"
+            )
+            
+            self.logger.info(f"Exported {len(table_rows)} table rows to {file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting to CSV: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Export Error", f"Error exporting to CSV: {str(e)}")
     
     def debug_data_state(self):
         """Debug method to show current data state"""

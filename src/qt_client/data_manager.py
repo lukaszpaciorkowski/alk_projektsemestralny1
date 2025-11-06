@@ -45,7 +45,7 @@ class DataStream:
     """Represents a data stream for a specific device and data type"""
     device_id: str
     data_type: str
-    data_points: deque = field(default_factory=lambda: deque(maxlen=1000))  # Keep last 1000 points
+    data_points: deque = field(default_factory=lambda: deque(maxlen=10000))  # Keep last 1000 points
     last_update: Optional[datetime] = None
     
     def add_data_point(self, data_point: DataPoint):
