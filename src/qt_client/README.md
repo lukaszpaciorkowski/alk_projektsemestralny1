@@ -107,7 +107,7 @@ The DataManager provides automatic data collection and analysis:
 - **Min/Max Values**: Range analysis
 
 ### Data Management
-- **Incremental Storage**: Keeps last 1000 data points per stream
+- **Incremental Storage**: Keeps last 10000 data points per stream
 - **Export/Import**: JSON format data export and import
 - **Real-time Updates**: Qt signals for UI integration
 - **Thread Safety**: Mutex-protected data access
